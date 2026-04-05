@@ -218,7 +218,7 @@ class BybitClient:
             {
                 "timestamp":    int(row["fundingRateTimestamp"]),
                 "funding_rate": float(row["fundingRate"]) * 100,  # as percentage
-                "mark_price":   float(row["markPrice"]),
+                "mark_price":   float(row.get("markPrice", 0)),
             }
             for row in reversed(raw)
         ]
