@@ -1,0 +1,12 @@
+.env
+.git
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+venv/
+tests/
+scripts/
+signals.db
+logs/
+*.log
