@@ -16,6 +16,10 @@ BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
+# Phase 2 API keys (optional — modules degrade gracefully if not set)
+CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY", "")
+GLASSNODE_API_KEY   = os.getenv("GLASSNODE_API_KEY", "")
+
 
 # ─── Exchange ────────────────────────────────────────────────────────────────
 
@@ -111,7 +115,50 @@ SIGNAL_WEIGHTS = {
     "FUNDING_EXTREME_NEGATIVE": 0.8,
     "LIQUIDATION_ZONE_NEARBY_ABOVE": 0.7,
     "LIQUIDATION_ZONE_NEARBY_BELOW": 0.7,
+    # Sentiment — Fear & Greed (Block 4)
+    "EXTREME_FEAR":                  0.9,
+    "EXTREME_GREED":                 0.9,
+    "FEAR":                          0.4,
+    "GREED":                         0.4,
+    # News (Block 6)
+    "NEWS_BULLISH_MAJOR":            0.8,
+    "NEWS_BEARISH_MAJOR":            0.8,
+    "HIGH_IMPACT_EVENT_APPROACHING": 0.5,
+    # On-chain (Block 5)
+    "EXCHANGE_INFLOW_SPIKE":         0.8,
+    "EXCHANGE_OUTFLOW_SPIKE":        0.8,
+    "WHALE_ACCUMULATION":            0.9,
+    "SOPR_BOTTOM_SIGNAL":            0.8,
+    "SOPR_TOP_SIGNAL":               0.8,
 }
+
+
+# ─── Fear & Greed ────────────────────────────────────────────────────────────
+
+FEAR_GREED_EXTREME_FEAR   = 20    # index <= this → EXTREME_FEAR signal
+FEAR_GREED_FEAR           = 40    # index <= this → FEAR signal
+FEAR_GREED_GREED          = 60    # index >= this → GREED signal
+FEAR_GREED_EXTREME_GREED  = 80    # index >= this → EXTREME_GREED signal
+
+
+# ─── News (CryptoPanic) ───────────────────────────────────────────────────────
+
+CRYPTOPANIC_BASE_URL      = "https://cryptopanic.com/api/v1/posts/"
+# Minimum number of bullish/bearish posts (last 10) to trigger signal
+NEWS_BULLISH_THRESHOLD    = 6
+NEWS_BEARISH_THRESHOLD    = 6
+NEWS_POLL_INTERVAL_MIN    = 15    # Fetch news every 15 minutes
+
+
+# ─── On-chain (Glassnode) ─────────────────────────────────────────────────────
+
+GLASSNODE_BASE_URL        = "https://api.glassnode.com/v1/metrics"
+# Exchange netflow: BTC moved to/from exchanges (daily)
+EXCHANGE_INFLOW_THRESHOLD  = 1000.0   # BTC inflow spike (bearish)
+EXCHANGE_OUTFLOW_THRESHOLD = 1000.0   # BTC outflow spike (bullish)
+SOPR_BOTTOM_THRESHOLD      = 0.98     # SOPR < this → holders selling at loss (dip)
+SOPR_TOP_THRESHOLD         = 1.04     # SOPR > this → profit taking (top signal)
+ONCHAIN_POLL_INTERVAL_MIN  = 60       # Fetch on-chain data every 60 minutes
 
 
 # ─── Scheduler ───────────────────────────────────────────────────────────────

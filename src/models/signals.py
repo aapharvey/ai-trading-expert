@@ -42,3 +42,28 @@ class TradeSignal:
     @property
     def strength_stars(self) -> str:
         return "⭐" * self.strength + "☆" * (5 - self.strength)
+
+
+# ─── Phase 2 result models ───────────────────────────────────────────────────
+
+from dataclasses import dataclass as _dc
+from typing import Optional as _Opt
+
+
+@_dc
+class SentimentResult:
+    """Fear & Greed index + CryptoPanic news sentiment."""
+    fear_greed_value:  _Opt[int]   = None   # 0–100
+    fear_greed_label:  _Opt[str]   = None   # "Extreme Fear" … "Extreme Greed"
+    news_sentiment:    _Opt[str]   = None   # "BULLISH", "BEARISH", "NEUTRAL"
+    bullish_news_count: int        = 0
+    bearish_news_count: int        = 0
+    signals: list[str]             = field(default_factory=list)
+
+
+@_dc
+class OnChainResult:
+    """Glassnode on-chain metrics."""
+    exchange_netflow:  _Opt[float] = None   # BTC net change on exchanges (daily)
+    sopr:              _Opt[float] = None   # Spent Output Profit Ratio
+    signals: list[str]             = field(default_factory=list)

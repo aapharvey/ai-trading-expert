@@ -2,7 +2,7 @@
 BTC Trading Signal System — Main Entry Point.
 
 Runs continuously, polling Bybit every 60 seconds.
-Sends signals and heartbeats to Telegram.
+Phase 2: Sentiment (Fear&Greed + CryptoPanic) and On-chain (Glassnode) added.
 Press Ctrl+C to stop gracefully.
 """
 
@@ -21,7 +21,10 @@ from src.telegram_notifier import TelegramNotifier
 from src.analyzers.price_action import PriceActionAnalyzer
 from src.analyzers.technical import TechnicalAnalyzer
 from src.analyzers.order_flow import OrderFlowAnalyzer
+from src.analyzers.sentiment import SentimentAnalyzer
+from src.analyzers.on_chain import OnChainAnalyzer
 from src.engine.confluence import ConfluenceEngine
+from src.models.signals import SentimentResult, OnChainResult
 
 init(autoreset=True)
 log = get_logger(__name__)
@@ -34,26 +37,29 @@ class TradingBot:
         self.pa        = PriceActionAnalyzer()
         self.tech      = TechnicalAnalyzer()
         self.of        = OrderFlowAnalyzer()
+        self.sentiment = SentimentAnalyzer()   # Phase 2: F&G + news (cached internally)
+        self.on_chain  = OnChainAnalyzer()     # Phase 2: Glassnode (cached internally)
         self.engine    = ConfluenceEngine()
         self.scheduler = BackgroundScheduler(timezone="UTC")
 
         # Dashboard state
-        self._price:       float = 0.0
-        self._trend:       str   = "—"
-        self._rsi:         float = 0.0
-        self._funding:     float = 0.0
-        self._oi_class:    str   = "—"
-        self._last_signal: str   = "—"
-        self._signals_sent: int  = 0
-        self._start_time         = datetime.now(timezone.utc)
-        self._running:     bool  = False
+        self._price:        float = 0.0
+        self._trend:        str   = "-"
+        self._rsi:          float = 0.0
+        self._funding:      float = 0.0
+        self._oi_class:     str   = "-"
+        self._fear_greed:   str   = "-"
+        self._last_signal:  str   = "-"
+        self._signals_sent: int   = 0
+        self._start_time          = datetime.now(timezone.utc)
+        self._running:      bool  = False
 
-    # ─── Main cycle ──────────────────────────────────────────────────────────
+    # ─── Main market cycle (every 60s) ───────────────────────────────────────
 
     def market_cycle(self) -> None:
-        """Called every 60 seconds. Fetch data → analyze → check signals."""
+        """Fetch market data → analyze → check signals → update dashboard."""
         try:
-            # ── Fetch data (staggered to respect rate limits) ─────────────────
+            # Fetch market data (staggered 0.3s to respect rate limits)
             ticker    = self.client.get_ticker()
             time.sleep(0.3)
             klines_1h = self.client.get_klines(interval=config.TIMEFRAMES["1h"])
@@ -66,7 +72,7 @@ class TradingBot:
 
             price = ticker["last_price"]
 
-            # ── Analyze ───────────────────────────────────────────────────────
+            # Analyze (Phase 1 blocks)
             pa_result   = self.pa.analyze(klines_4h)
             tech_result = self.tech.analyze(klines_1h)
             of_result   = self.of.analyze(
@@ -76,20 +82,29 @@ class TradingBot:
                 current_price=price,
             )
 
-            # ── Update dashboard state ────────────────────────────────────────
-            self._price    = price
-            self._trend    = pa_result.trend
-            self._rsi      = tech_result.rsi or 0.0
-            self._funding  = of_result.funding_rate or 0.0
-            self._oi_class = of_result.oi_class or "—"
+            # Phase 2 blocks (use cached results — updated by their own schedules)
+            sent_result = self.sentiment.analyze()
+            oc_result   = self.on_chain.analyze()
 
-            # ── Evaluate signals ──────────────────────────────────────────────
-            signal = self.engine.evaluate(pa_result, tech_result, of_result)
-            if signal:
-                sent = self.telegram.send_signal(signal)
+            # Update dashboard state
+            self._price      = price
+            self._trend      = pa_result.trend
+            self._rsi        = tech_result.rsi or 0.0
+            self._funding    = of_result.funding_rate or 0.0
+            self._oi_class   = of_result.oi_class or "-"
+            self._fear_greed = (
+                f"{sent_result.fear_greed_value} ({sent_result.fear_greed_label})"
+                if sent_result.fear_greed_value is not None
+                else "-"
+            )
+
+            # Evaluate confluence (all 5 blocks)
+            sig = self.engine.evaluate(pa_result, tech_result, of_result, sent_result, oc_result)
+            if sig:
+                sent = self.telegram.send_signal(sig)
                 if sent:
                     self._signals_sent += 1
-                    direction_str = f"{signal.direction.value} [{signal.strength}/5]"
+                    direction_str = f"{sig.direction.value} [{sig.strength}/5]"
                     ts = datetime.now(timezone.utc).strftime("%H:%M UTC")
                     self._last_signal = f"{direction_str} at {ts}"
                     log.info("Signal sent: %s", direction_str)
@@ -102,7 +117,7 @@ class TradingBot:
             log.error("Unexpected error in market cycle: %s", exc, exc_info=True)
 
     def heartbeat(self) -> None:
-        """Sent hourly to Telegram to confirm system is alive."""
+        """Hourly Telegram heartbeat."""
         try:
             self.telegram.send_heartbeat(
                 price=self._price,
@@ -120,56 +135,55 @@ class TradingBot:
         elapsed = datetime.now(timezone.utc) - self._start_time
         hours, rem = divmod(int(elapsed.total_seconds()), 3600)
         minutes = rem // 60
-
-        price_color = Fore.GREEN if self._trend == "BULLISH" else (
-            Fore.RED if self._trend == "BEARISH" else Fore.YELLOW
-        )
-        rsi_color = Fore.RED if self._rsi > 70 else (
-            Fore.GREEN if self._rsi < 30 else Fore.WHITE
-        )
-        fund_color = Fore.RED if self._funding > 0.05 else (
-            Fore.GREEN if self._funding < -0.05 else Fore.WHITE
-        )
-
-        line = "=" * 55
         now = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
+        line = "=" * 60
+
         try:
             print(f"\n{line}")
-            print(
-                f" BTC/USDT | ${self._price:>10,.2f} | Trend: {self._trend:<8} | {now}"
-            )
-            print(
-                f" RSI: {self._rsi:>5.1f} | Funding: {self._funding:>+.4f}% | OI: {self._oi_class}"
-            )
+            print(f" BTC/USDT | ${self._price:>10,.2f} | Trend: {self._trend:<8} | {now}")
+            print(f" RSI: {self._rsi:>5.1f} | Funding: {self._funding:>+.4f}% | OI: {self._oi_class}")
+            print(f" Fear & Greed: {self._fear_greed}")
             print(f" Last signal : {self._last_signal}")
             print(f" Signals sent: {self._signals_sent} | Uptime: {hours}h {minutes}m")
             print(line)
         except UnicodeEncodeError:
-            # Fallback for terminals with limited encoding
             log.info(
-                "BTC $%.2f | Trend:%s RSI:%.1f Fund:%+.4f%% | Signals:%d Up:%dh%dm",
+                "BTC $%.2f | %s RSI:%.1f Fund:%+.4f%% F&G:%s | Signals:%d Up:%dh%dm",
                 self._price, self._trend, self._rsi, self._funding,
-                self._signals_sent, hours, minutes,
+                self._fear_greed, self._signals_sent, hours, minutes,
             )
 
     # ─── Lifecycle ───────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        log.info("Starting BTC Trading Signal System...")
-        self.telegram.send_alert("🟢 <b>BTC Signal System started</b>")
+        log.info("Starting BTC Trading Signal System (Phase 2)...")
+
+        # Log Phase 2 module status
+        if config.CRYPTOPANIC_API_KEY:
+            log.info("CryptoPanic news: ENABLED")
+        else:
+            log.info("CryptoPanic news: DISABLED (no API key)")
+
+        if config.GLASSNODE_API_KEY:
+            log.info("Glassnode on-chain: ENABLED")
+        else:
+            log.info("Glassnode on-chain: DISABLED (no API key)")
+
+        self.telegram.send_alert(
+            "🟢 <b>BTC Signal System started (Phase 2)</b>\n"
+            f"Fear&Greed: {'on' if True else 'off'} | "
+            f"News: {'on' if config.CRYPTOPANIC_API_KEY else 'off'} | "
+            f"On-chain: {'on' if config.GLASSNODE_API_KEY else 'off'}"
+        )
 
         # Schedule jobs
         self.scheduler.add_job(
-            self.market_cycle,
-            "interval",
+            self.market_cycle, "interval",
             seconds=config.MARKET_POLL_INTERVAL_SEC,
-            id="market_cycle",
-            max_instances=1,
-            coalesce=True,
+            id="market_cycle", max_instances=1, coalesce=True,
         )
         self.scheduler.add_job(
-            self.heartbeat,
-            "interval",
+            self.heartbeat, "interval",
             minutes=config.HEARTBEAT_INTERVAL_MIN,
             id="heartbeat",
         )
@@ -177,7 +191,7 @@ class TradingBot:
         self.scheduler.start()
         self._running = True
 
-        # Run first cycle immediately
+        # First cycle immediately
         self.market_cycle()
 
         log.info("Scheduler running. Press Ctrl+C to stop.")
@@ -196,28 +210,21 @@ class TradingBot:
 
 
 def main() -> None:
-    # Validate credentials on startup
-    missing = []
-    if not config.BYBIT_API_KEY:
-        missing.append("BYBIT_API_KEY")
-    if not config.TELEGRAM_BOT_TOKEN:
-        missing.append("TELEGRAM_BOT_TOKEN")
-    if not config.TELEGRAM_CHAT_ID:
-        missing.append("TELEGRAM_CHAT_ID")
-
+    missing = [
+        k for k in ("BYBIT_API_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+        if not getattr(config, k, "")
+    ]
     if missing:
         log.critical("Missing credentials in .env: %s", ", ".join(missing))
         sys.exit(1)
 
     bot = TradingBot()
 
-    # Handle SIGTERM (Docker/process managers)
     def handle_sigterm(signum, frame):
         bot.stop()
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, handle_sigterm)
-
     bot.start()
 
 

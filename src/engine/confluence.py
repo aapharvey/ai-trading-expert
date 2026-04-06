@@ -1,8 +1,9 @@
 """
-Confluence Engine — aggregates signals from all 3 blocks and emits TradeSignals.
+Confluence Engine — aggregates signals from all blocks and emits TradeSignals.
 
 Logic:
-  1. Collect all raw signals from PriceAction, Technical, OrderFlow
+  1. Collect all raw signals from PriceAction, Technical, OrderFlow,
+     Sentiment (optional), OnChain (optional)
   2. Score each direction (LONG / SHORT) using signal weights from config
   3. Normalize score to 1–5
   4. If score >= MIN_SIGNAL_STRENGTH and R:R >= MIN_RR_RATIO → emit TradeSignal
@@ -17,33 +18,51 @@ from logger import get_logger
 from src.analyzers.price_action import PriceActionResult
 from src.analyzers.technical import TechnicalResult
 from src.analyzers.order_flow import OrderFlowResult
-from src.models.signals import Direction, Timeframe, TradeSignal
+from src.models.signals import Direction, Timeframe, TradeSignal, SentimentResult, OnChainResult
 
 log = get_logger(__name__)
 
 
 # Signals that contribute to LONG direction
 _LONG_SIGNALS = {
+    # Block 1 — Price Action
     "BULLISH_BREAK", "AT_KEY_SUPPORT",
+    # Block 2 — Technical
     "EMA_CROSS_UP", "PRICE_ABOVE_EMA200",
     "RSI_OVERSOLD", "MACD_CROSS_UP", "MACD_DIVERGENCE_BULL",
     "BB_BREAKOUT_UP",
+    # Block 3 — Order Flow
     "OI_LONG_BUILDUP", "OI_SHORT_UNWIND",
     "CVD_DIVERGENCE_BULL",
-    "FUNDING_EXTREME_NEGATIVE",    # oversold shorts → squeeze up
-    "LIQUIDATION_ZONE_NEARBY_ABOVE",  # price hunting liq above → move up
+    "FUNDING_EXTREME_NEGATIVE",
+    "LIQUIDATION_ZONE_NEARBY_ABOVE",
+    # Block 4 — Sentiment (contrarian: fear → buy)
+    "EXTREME_FEAR", "FEAR",
+    # Block 5 — On-chain
+    "EXCHANGE_OUTFLOW_SPIKE", "WHALE_ACCUMULATION", "SOPR_BOTTOM_SIGNAL",
+    # Block 6 — News
+    "NEWS_BULLISH_MAJOR",
 }
 
 # Signals that contribute to SHORT direction
 _SHORT_SIGNALS = {
+    # Block 1
     "BEARISH_BREAK", "AT_KEY_RESISTANCE",
+    # Block 2
     "EMA_CROSS_DOWN", "PRICE_BELOW_EMA200",
     "RSI_OVERBOUGHT", "MACD_CROSS_DOWN", "MACD_DIVERGENCE_BEAR",
     "BB_BREAKOUT_DOWN",
+    # Block 3
     "OI_SHORT_BUILDUP", "OI_LONG_UNWIND",
     "CVD_DIVERGENCE_BEAR",
-    "FUNDING_EXTREME_POSITIVE",    # oversold longs → squeeze down
+    "FUNDING_EXTREME_POSITIVE",
     "LIQUIDATION_ZONE_NEARBY_BELOW",
+    # Block 4 — Sentiment (contrarian: greed → sell)
+    "EXTREME_GREED", "GREED",
+    # Block 5 — On-chain
+    "EXCHANGE_INFLOW_SPIKE", "SOPR_TOP_SIGNAL",
+    # Block 6 — News
+    "NEWS_BEARISH_MAJOR",
 }
 
 # Maximum possible score (sum of all weights for one direction)
@@ -67,14 +86,23 @@ class ConfluenceEngine:
 
     def evaluate(
         self,
-        pa:    PriceActionResult,
-        tech:  TechnicalResult,
-        of:    OrderFlowResult,
+        pa:        PriceActionResult,
+        tech:      TechnicalResult,
+        of:        OrderFlowResult,
+        sentiment: Optional[SentimentResult] = None,
+        on_chain:  Optional[OnChainResult]   = None,
     ) -> Optional[TradeSignal]:
         """
         Main entry point. Returns a TradeSignal or None.
+        Phase 2 args (sentiment, on_chain) are optional — backward compatible.
         """
-        all_signals = pa.signals + tech.signals + of.signals
+        all_signals = (
+            pa.signals
+            + tech.signals
+            + of.signals
+            + (sentiment.signals if sentiment else [])
+            + (on_chain.signals  if on_chain  else [])
+        )
 
         long_score, long_factors   = self._score(all_signals, _LONG_SIGNALS)
         short_score, short_factors = self._score(all_signals, _SHORT_SIGNALS)
@@ -251,5 +279,20 @@ class ConfluenceEngine:
             "FUNDING_EXTREME_NEGATIVE":   "Funding rate extreme low (shorts overextended)",
             "LIQUIDATION_ZONE_NEARBY_ABOVE": "Liquidation cluster above price",
             "LIQUIDATION_ZONE_NEARBY_BELOW": "Liquidation cluster below price",
+            # Sentiment (Block 4)
+            "EXTREME_FEAR":                  "Fear & Greed: Extreme Fear (contrarian long)",
+            "FEAR":                           "Fear & Greed: Fear zone",
+            "EXTREME_GREED":                 "Fear & Greed: Extreme Greed (contrarian short)",
+            "GREED":                          "Fear & Greed: Greed zone",
+            # On-chain (Block 5)
+            "EXCHANGE_INFLOW_SPIKE":         "Exchange inflow spike (sell pressure)",
+            "EXCHANGE_OUTFLOW_SPIKE":        "Exchange outflow spike (accumulation)",
+            "WHALE_ACCUMULATION":            "Whale accumulation detected",
+            "SOPR_BOTTOM_SIGNAL":            "SOPR < 1 (holders selling at loss — potential bottom)",
+            "SOPR_TOP_SIGNAL":               "SOPR > 1.04 (profit taking — potential top)",
+            # News (Block 6)
+            "NEWS_BULLISH_MAJOR":            "Majority of recent news is bullish",
+            "NEWS_BEARISH_MAJOR":            "Majority of recent news is bearish",
+            "HIGH_IMPACT_EVENT_APPROACHING": "High-impact macro event approaching",
         }
         return labels.get(signal, signal)
