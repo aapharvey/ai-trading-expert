@@ -14,7 +14,7 @@ from logger import get_logger
 log = get_logger(__name__)
 
 # Bybit API limits: 120 req/min for market endpoints (public, no auth needed)
-_REQUEST_TIMEOUT = 10        # seconds
+_REQUEST_TIMEOUT = 6         # seconds
 _MAX_RETRIES = 3
 _RETRY_BACKOFF = [1, 2, 4]  # seconds between retries
 

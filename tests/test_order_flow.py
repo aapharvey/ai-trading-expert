@@ -216,19 +216,19 @@ class TestSignalGeneration:
 
     def test_funding_extreme_positive_signal(self):
         analyzer = OrderFlowAnalyzer()
-        result = OrderFlowResult(funding_rate=0.06)  # > 0.05 threshold
+        result = OrderFlowResult(funding_rate=0.02)  # > 0.01 threshold
         signals = analyzer._generate_signals(result)
         assert "FUNDING_EXTREME_POSITIVE" in signals
 
     def test_funding_extreme_negative_signal(self):
         analyzer = OrderFlowAnalyzer()
-        result = OrderFlowResult(funding_rate=-0.06)
+        result = OrderFlowResult(funding_rate=-0.02)
         signals = analyzer._generate_signals(result)
         assert "FUNDING_EXTREME_NEGATIVE" in signals
 
     def test_no_funding_signal_within_normal(self):
         analyzer = OrderFlowAnalyzer()
-        result = OrderFlowResult(funding_rate=0.01)
+        result = OrderFlowResult(funding_rate=0.005)  # below 0.01 threshold
         signals = analyzer._generate_signals(result)
         assert "FUNDING_EXTREME_POSITIVE" not in signals
         assert "FUNDING_EXTREME_NEGATIVE" not in signals

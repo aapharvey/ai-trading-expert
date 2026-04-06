@@ -27,7 +27,7 @@ from src.models.signals import OnChainResult
 
 log = get_logger(__name__)
 
-_REQUEST_TIMEOUT = 10
+_REQUEST_TIMEOUT = 6
 _METRICS_PATH    = "/timeseries/asset-metrics"
 
 

@@ -72,8 +72,8 @@ TP2_ATR_MULTIPLIER  = 3.5
 # ─── Order Flow ──────────────────────────────────────────────────────────────
 
 OI_CHANGE_THRESHOLD_PCT = 2.0     # OI change > 2% in 1h = significant
-FUNDING_EXTREME_HIGH    = 0.05    # % per 8h
-FUNDING_EXTREME_LOW     = -0.05
+FUNDING_EXTREME_HIGH    = 0.01    # % per 8h — 95th percentile of Bybit BTC history (200 records, Apr 2026)
+FUNDING_EXTREME_LOW     = -0.01
 LIQUIDATION_ZONE_NEAR_PCT = 2.0   # Liquidation zone within 2% of price
 
 
@@ -109,8 +109,8 @@ SIGNAL_WEIGHTS = {
     "OI_SHORT_BUILDUP":        0.8,
     "OI_LONG_UNWIND":          0.7,
     "OI_SHORT_UNWIND":         0.7,
-    "CVD_DIVERGENCE_BULL":     0.9,
-    "CVD_DIVERGENCE_BEAR":     0.9,
+    "CVD_DIVERGENCE_BULL":     0.6,
+    "CVD_DIVERGENCE_BEAR":     0.6,
     "FUNDING_EXTREME_POSITIVE": 0.8,
     "FUNDING_EXTREME_NEGATIVE": 0.8,
     "LIQUIDATION_ZONE_NEARBY_ABOVE": 0.7,

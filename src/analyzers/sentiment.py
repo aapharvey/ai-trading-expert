@@ -25,7 +25,7 @@ from src.models.signals import SentimentResult
 log = get_logger(__name__)
 
 _FEAR_GREED_URL  = "https://api.alternative.me/fng/?limit=1"
-_REQUEST_TIMEOUT = 8
+_REQUEST_TIMEOUT = 5
 
 
 class SentimentAnalyzer:

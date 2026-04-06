@@ -2,7 +2,7 @@
 BTC Trading Signal System — Main Entry Point.
 
 Runs continuously, polling Bybit every 60 seconds.
-Phase 2: Sentiment (Fear&Greed + CryptoPanic) and On-chain (Glassnode) added.
+Phase 2: Sentiment (Fear&Greed + CryptoPanic) and On-chain (CoinMetrics) added.
 Press Ctrl+C to stop gracefully.
 """
 
@@ -58,6 +58,7 @@ class TradingBot:
 
     def market_cycle(self) -> None:
         """Fetch market data → analyze → check signals → update dashboard."""
+        _cycle_start = time.monotonic()
         try:
             # Fetch market data (staggered 0.3s to respect rate limits)
             ticker    = self.client.get_ticker()
@@ -110,6 +111,12 @@ class TradingBot:
                     log.info("Signal sent: %s", direction_str)
 
             self._print_dashboard()
+
+            _elapsed = time.monotonic() - _cycle_start
+            if _elapsed > 50:
+                log.warning("Market cycle took %.1fs — approaching scheduler limit", _elapsed)
+            else:
+                log.debug("Market cycle completed in %.1fs", _elapsed)
 
         except BybitAPIError as exc:
             log.error("Bybit API error in market cycle: %s", exc)
