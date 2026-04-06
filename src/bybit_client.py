@@ -126,6 +126,45 @@ class BybitClient:
         log.debug("get_klines(%s, %s): %d candles", symbol, interval, len(candles))
         return candles
 
+    def get_klines_range(
+        self,
+        start_ms: int,
+        end_ms:   int,
+        interval: str = "60",
+        symbol:   str = config.SYMBOL,
+    ) -> list[dict]:
+        """
+        Fetch OHLCV candles for a specific time range.
+        start_ms / end_ms: Unix timestamps in milliseconds.
+        Returns list sorted oldest → newest (same format as get_klines).
+        """
+        body = self._get(
+            "/v5/market/kline",
+            params={
+                "category": config.CATEGORY,
+                "symbol":   symbol,
+                "interval": interval,
+                "start":    start_ms,
+                "end":      end_ms,
+                "limit":    200,
+            },
+        )
+        raw = self._result_list(body)
+        candles = [
+            {
+                "start_time": int(row[0]),
+                "open":       float(row[1]),
+                "high":       float(row[2]),
+                "low":        float(row[3]),
+                "close":      float(row[4]),
+                "volume":     float(row[5]),
+                "turnover":   float(row[6]),
+            }
+            for row in reversed(raw)
+        ]
+        log.debug("get_klines_range(%s, %s-%s): %d candles", symbol, start_ms, end_ms, len(candles))
+        return candles
+
     def get_ticker(
         self,
         symbol: str = config.SYMBOL,

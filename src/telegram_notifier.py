@@ -117,6 +117,33 @@ class TelegramNotifier:
         )
         return self._send(text)
 
+    def send_stats_report(self, stats: dict) -> bool:
+        """Send weekly performance report from the signal journal."""
+        if stats.get("total", 0) == 0:
+            return self._send(
+                f"<b>Weekly Signal Report ({stats.get('days', 7)}d)</b>\n"
+                f"No resolved signals in this period."
+            )
+
+        total    = stats["total"]
+        wins     = stats["win_full"] + stats["win_partial"]
+        win_rate = stats["win_rate"] * 100
+
+        text = (
+            f"<b>Weekly Signal Report ({stats['days']}d)</b>\n"
+            f"{'─' * 28}\n"
+            f"Total signals: <b>{total}</b>\n"
+            f"Win rate: <b>{win_rate:.0f}%</b> ({wins}/{total})\n"
+            f"  Full wins (TP2):    {stats['win_full']}\n"
+            f"  Partial (TP1 only): {stats['win_partial']}\n"
+            f"  Losses:             {stats['losses']}\n"
+            f"  Expired:            {stats['expired']}\n"
+            f"{'─' * 28}\n"
+            f"LONG: {stats['long_count']} | SHORT: {stats['short_count']}"
+        )
+        log.info("Sending weekly stats report to Telegram")
+        return self._send(text)
+
     def test_connection(self) -> bool:
         """Send a test message to verify bot credentials. Returns True if OK."""
         return self._send("🔧 <b>BTC Signal Bot</b> — connection test OK ✅")

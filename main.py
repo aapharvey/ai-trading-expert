@@ -3,6 +3,7 @@ BTC Trading Signal System — Main Entry Point.
 
 Runs continuously, polling Bybit every 60 seconds.
 Phase 2: Sentiment (Fear&Greed + CryptoPanic) and On-chain (CoinMetrics) added.
+Phase 3: Signal Journal + Outcome Checker (paper trading validation).
 Press Ctrl+C to stop gracefully.
 """
 
@@ -25,6 +26,8 @@ from src.analyzers.sentiment import SentimentAnalyzer
 from src.analyzers.on_chain import OnChainAnalyzer
 from src.engine.confluence import ConfluenceEngine
 from src.models.signals import SentimentResult, OnChainResult
+from src.journal.signal_journal import SignalJournal
+from src.journal.outcome_checker import OutcomeChecker
 
 init(autoreset=True)
 log = get_logger(__name__)
@@ -38,8 +41,10 @@ class TradingBot:
         self.tech      = TechnicalAnalyzer()
         self.of        = OrderFlowAnalyzer()
         self.sentiment = SentimentAnalyzer()   # Phase 2: F&G + news (cached internally)
-        self.on_chain  = OnChainAnalyzer()     # Phase 2: Glassnode (cached internally)
+        self.on_chain  = OnChainAnalyzer()     # Phase 2: CoinMetrics (cached internally)
         self.engine    = ConfluenceEngine()
+        self.journal   = SignalJournal()       # Phase 3: paper trading log
+        self.checker   = OutcomeChecker(self.journal, self.client)  # Phase 3: auto-verify
         self.scheduler = BackgroundScheduler(timezone="UTC")
 
         # Dashboard state
@@ -109,6 +114,7 @@ class TradingBot:
                     ts = datetime.now(timezone.utc).strftime("%H:%M UTC")
                     self._last_signal = f"{direction_str} at {ts}"
                     log.info("Signal sent: %s", direction_str)
+                    self.journal.record(sig)   # Phase 3: persist for outcome tracking
 
             self._print_dashboard()
 
@@ -122,6 +128,21 @@ class TradingBot:
             log.error("Bybit API error in market cycle: %s", exc)
         except Exception as exc:
             log.error("Unexpected error in market cycle: %s", exc, exc_info=True)
+
+    def check_outcomes(self) -> None:
+        """Phase 3: resolve pending signal outcomes (runs every 30 min)."""
+        try:
+            self.checker.check_pending()
+        except Exception as exc:
+            log.error("Outcome checker error: %s", exc)
+
+    def weekly_report(self) -> None:
+        """Phase 3: send weekly performance stats to Telegram (Sundays 09:00 UTC)."""
+        try:
+            stats = self.journal.get_stats(days=7)
+            self.telegram.send_stats_report(stats)
+        except Exception as exc:
+            log.error("Weekly report error: %s", exc)
 
     def heartbeat(self) -> None:
         """Hourly Telegram heartbeat."""
@@ -190,6 +211,16 @@ class TradingBot:
             self.heartbeat, "interval",
             minutes=config.HEARTBEAT_INTERVAL_MIN,
             id="heartbeat",
+        )
+        self.scheduler.add_job(
+            self.check_outcomes, "interval",
+            minutes=30,
+            id="outcome_checker",
+        )
+        self.scheduler.add_job(
+            self.weekly_report, "cron",
+            day_of_week="sun", hour=9, minute=0,
+            id="weekly_report",
         )
 
         self.scheduler.start()
