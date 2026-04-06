@@ -164,16 +164,13 @@ class TradingBot:
         else:
             log.info("CryptoPanic news: DISABLED (no API key)")
 
-        if config.GLASSNODE_API_KEY:
-            log.info("Glassnode on-chain: ENABLED")
-        else:
-            log.info("Glassnode on-chain: DISABLED (no API key)")
+        log.info("CoinMetrics on-chain: ENABLED (free, no key required)")
 
         self.telegram.send_alert(
             "🟢 <b>BTC Signal System started (Phase 2)</b>\n"
             f"Fear&Greed: {'on' if True else 'off'} | "
             f"News: {'on' if config.CRYPTOPANIC_API_KEY else 'off'} | "
-            f"On-chain: {'on' if config.GLASSNODE_API_KEY else 'off'}"
+            f"On-chain: on (CoinMetrics)"
         )
 
         # Schedule jobs

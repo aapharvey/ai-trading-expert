@@ -63,7 +63,7 @@ class SentimentResult:
 
 @_dc
 class OnChainResult:
-    """Glassnode on-chain metrics."""
+    """CoinMetrics Community on-chain metrics."""
     exchange_netflow:  _Opt[float] = None   # BTC net change on exchanges (daily)
-    sopr:              _Opt[float] = None   # Spent Output Profit Ratio
+    mvrv:              _Opt[float] = None   # Market Value to Realized Value ratio
     signals: list[str]             = field(default_factory=list)

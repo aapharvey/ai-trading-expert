@@ -1,17 +1,17 @@
 """
 Block 5: On-Chain Analyzer.
-Glassnode metrics: Exchange Netflow (dynamic threshold) + SOPR.
+CoinMetrics Community API: Exchange Netflow + MVRV Ratio.
+No API key required — free, no registration.
 
 Exchange Netflow spike detection:
-  - Fetches 7-day daily netflow history.
+  - Fetches 7-day daily netflow history (FlowInExNtv - FlowOutExNtv).
   - Spike = today's value deviates > EXCHANGE_FLOW_STD_MULTIPLIER * std
     from the 7-day rolling mean. No hardcoded BTC absolute thresholds.
 
-SOPR thresholds (Expert-validated):
-  - Bottom signal: SOPR < 0.95  (capitulation, real dip)
-  - Top signal:    SOPR > 1.07  (extended profit taking)
+MVRV thresholds (Expert-validated):
+  - Bottom signal: MVRV < 1.0  (market below realized cap — capitulation)
+  - Top signal:    MVRV > 3.5  (historically overbought — potential top)
 
-Requires GLASSNODE_API_KEY in .env. Gracefully returns empty if absent.
 Results cached for ONCHAIN_POLL_INTERVAL_MIN (60 min).
 """
 
@@ -28,6 +28,7 @@ from src.models.signals import OnChainResult
 log = get_logger(__name__)
 
 _REQUEST_TIMEOUT = 10
+_METRICS_PATH    = "/timeseries/asset-metrics"
 
 
 class OnChainAnalyzer:
@@ -42,24 +43,20 @@ class OnChainAnalyzer:
         Returns OnChainResult with signals. Uses cache.
         Always returns a valid result (never raises).
         """
-        if not config.GLASSNODE_API_KEY:
-            log.debug("Glassnode: API key not set — skipping on-chain analysis")
-            return OnChainResult()
-
         if self._is_fresh():
             return self._cache  # type: ignore[return-value]
 
         netflow, netflow_signal = self._fetch_exchange_netflow()
-        sopr                   = self._fetch_sopr()
+        mvrv                   = self._fetch_mvrv()
 
         signals = []
         if netflow_signal:
             signals.append(netflow_signal)
-        signals += self._sopr_signals(sopr)
+        signals += self._mvrv_signals(mvrv)
 
         result = OnChainResult(
             exchange_netflow=netflow,
-            sopr=sopr,
+            mvrv=mvrv,
             signals=signals,
         )
 
@@ -67,9 +64,9 @@ class OnChainAnalyzer:
         self._cached_at = datetime.now(timezone.utc)
 
         log.info(
-            "On-chain: netflow=%s sopr=%s signals=%s",
+            "On-chain: netflow=%s mvrv=%s signals=%s",
             f"{netflow:.1f}" if netflow is not None else "N/A",
-            f"{sopr:.4f}"    if sopr    is not None else "N/A",
+            f"{mvrv:.4f}"    if mvrv    is not None else "N/A",
             signals,
         )
         return result
@@ -78,29 +75,27 @@ class OnChainAnalyzer:
 
     def _fetch_exchange_netflow(self) -> tuple[Optional[float], Optional[str]]:
         """
-        Fetches 7-day daily exchange inflow and outflow history.
-        Computes netflow = inflow - outflow per day.
+        Fetches EXCHANGE_FLOW_HISTORY_DAYS+1 days of BTC inflow and outflow
+        in a single CoinMetrics call.
+        Computes netflow = FlowInExNtv - FlowOutExNtv per day.
         Detects spike: |today - 7d_mean| > EXCHANGE_FLOW_STD_MULTIPLIER * 7d_std.
         Returns (today_netflow, signal_name_or_None).
         """
         try:
-            inflows  = self._glassnode_history(
-                "transactions/transfers_to_exchanges_sum",
-                days=config.EXCHANGE_FLOW_HISTORY_DAYS + 1,
+            rows = self._coinmetrics_fetch(
+                metrics="FlowInExNtv,FlowOutExNtv",
+                limit=config.EXCHANGE_FLOW_HISTORY_DAYS + 1,
             )
-            outflows = self._glassnode_history(
-                "transactions/transfers_from_exchanges_sum",
-                days=config.EXCHANGE_FLOW_HISTORY_DAYS + 1,
-            )
-            if not inflows or not outflows:
+            if not rows:
                 return None, None
 
-            # Align by timestamp — zip by position (same daily cadence)
-            n = min(len(inflows), len(outflows))
-            netflows = [
-                inflows[i]["v"] - outflows[i]["v"]
-                for i in range(n)
-            ]
+            netflows = []
+            for row in rows:
+                inflow  = row.get("FlowInExNtv")
+                outflow = row.get("FlowOutExNtv")
+                if inflow is None or outflow is None:
+                    continue
+                netflows.append(float(inflow) - float(outflow))
 
             if len(netflows) < 3:
                 return None, None
@@ -108,11 +103,11 @@ class OnChainAnalyzer:
             today   = netflows[-1]
             history = netflows[:-1]   # exclude today from baseline
 
-            mean    = sum(history) / len(history)
+            mean     = sum(history) / len(history)
             variance = sum((x - mean) ** 2 for x in history) / len(history)
-            std     = math.sqrt(variance) if variance > 0 else 1.0
+            std      = math.sqrt(variance) if variance > 0 else 1.0
 
-            z_score = (today - mean) / std
+            z_score   = (today - mean) / std
             threshold = config.EXCHANGE_FLOW_STD_MULTIPLIER
 
             log.debug(
@@ -130,53 +125,52 @@ class OnChainAnalyzer:
             log.debug("Exchange netflow fetch error: %s", exc)
             return None, None
 
-    # ─── SOPR ────────────────────────────────────────────────────────────────
+    # ─── MVRV ─────────────────────────────────────────────────────────────────
 
-    def _fetch_sopr(self) -> Optional[float]:
+    def _fetch_mvrv(self) -> Optional[float]:
         try:
-            data = self._glassnode_history("indicators/sopr", days=2)
-            if not data:
+            rows = self._coinmetrics_fetch("CapMVRVCur", limit=2)
+            if not rows:
                 return None
-            value = data[-1]["v"]
-            log.debug("SOPR: %.4f", value)
-            return float(value)
+            value = rows[-1].get("CapMVRVCur")
+            if value is None:
+                return None
+            result = float(value)
+            log.debug("MVRV: %.4f", result)
+            return result
         except Exception as exc:
-            log.debug("SOPR fetch error: %s", exc)
+            log.debug("MVRV fetch error: %s", exc)
             return None
 
-    def _sopr_signals(self, sopr: Optional[float]) -> list[str]:
-        if sopr is None:
+    def _mvrv_signals(self, mvrv: Optional[float]) -> list[str]:
+        if mvrv is None:
             return []
-        if sopr < config.SOPR_BOTTOM_THRESHOLD:
-            return ["SOPR_BOTTOM_SIGNAL"]
-        if sopr > config.SOPR_TOP_THRESHOLD:
-            return ["SOPR_TOP_SIGNAL"]
+        if mvrv < config.MVRV_BOTTOM_THRESHOLD:
+            return ["MVRV_BOTTOM_SIGNAL"]
+        if mvrv > config.MVRV_TOP_THRESHOLD:
+            return ["MVRV_TOP_SIGNAL"]
         return []
 
-    # ─── Glassnode HTTP helper ────────────────────────────────────────────────
+    # ─── CoinMetrics HTTP helper ───────────────────────────────────────────────
 
-    def _glassnode_history(self, endpoint: str, days: int) -> list[dict]:
+    def _coinmetrics_fetch(self, metrics: str, limit: int) -> list[dict]:
         """
-        Fetch daily time series from Glassnode.
-        Returns list of {t: unix_ts, v: float}, oldest first.
+        Fetch daily time series from CoinMetrics Community API.
+        Returns list of data rows (dicts), oldest first.
+        No API key required.
         """
-        since = datetime.now(timezone.utc) - timedelta(days=days)
-
         resp = requests.get(
-            f"{config.GLASSNODE_BASE_URL}/{endpoint}",
+            config.COINMETRICS_BASE_URL + _METRICS_PATH,
             params={
-                "a":       "BTC",
-                "api_key": config.GLASSNODE_API_KEY,
-                "i":       "24h",
-                "s":       int(since.timestamp()),
+                "assets":          "btc",
+                "metrics":         metrics,
+                "frequency":       "1d",
+                "limit_per_asset": limit,
             },
             timeout=_REQUEST_TIMEOUT,
         )
         resp.raise_for_status()
-        data = resp.json()
-
-        # Filter out entries where v is None
-        return [row for row in data if row.get("v") is not None]
+        return resp.json().get("data", [])
 
     # ─── Cache ────────────────────────────────────────────────────────────────
 

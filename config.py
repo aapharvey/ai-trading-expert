@@ -16,9 +16,9 @@ BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# Phase 2 API keys (optional — modules degrade gracefully if not set)
+# Phase 2 API keys
 CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY", "")
-GLASSNODE_API_KEY   = os.getenv("GLASSNODE_API_KEY", "")
+# CoinMetrics Community Edition — no API key required (free, no registration)
 
 
 # ─── Exchange ────────────────────────────────────────────────────────────────
@@ -128,8 +128,8 @@ SIGNAL_WEIGHTS = {
     "EXCHANGE_INFLOW_SPIKE":         0.8,
     "EXCHANGE_OUTFLOW_SPIKE":        0.8,
     "WHALE_ACCUMULATION":            0.9,
-    "SOPR_BOTTOM_SIGNAL":            0.8,
-    "SOPR_TOP_SIGNAL":               0.8,
+    "MVRV_BOTTOM_SIGNAL":            0.8,
+    "MVRV_TOP_SIGNAL":               0.8,
 }
 
 
@@ -151,17 +151,17 @@ NEWS_MIN_POSTS            = 2     # minimum posts needed to form an opinion
 NEWS_POLL_INTERVAL_MIN    = 20    # Fetch news every 20 minutes
 
 
-# ─── On-chain (Glassnode) ─────────────────────────────────────────────────────
+# ─── On-chain (CoinMetrics Community) ────────────────────────────────────────
 
-GLASSNODE_BASE_URL        = "https://api.glassnode.com/v1/metrics"
+COINMETRICS_BASE_URL         = "https://community-api.coinmetrics.io/v4"
 # Exchange netflow: spike = current value deviates > N standard deviations
 # from the 7-day rolling mean (avoids hardcoded absolute BTC thresholds)
 EXCHANGE_FLOW_STD_MULTIPLIER = 2.0   # signal when |netflow| > mean ± 2σ
 EXCHANGE_FLOW_HISTORY_DAYS   = 7     # rolling window for mean/std calculation
-# SOPR thresholds (Expert-validated)
-SOPR_BOTTOM_THRESHOLD      = 0.95    # < 0.95 for 2+ days → real capitulation bottom
-SOPR_TOP_THRESHOLD         = 1.07    # > 1.07 → extended profit taking, potential top
-ONCHAIN_POLL_INTERVAL_MIN  = 60      # Fetch on-chain data every 60 minutes
+# MVRV thresholds (Expert-validated)
+MVRV_BOTTOM_THRESHOLD        = 1.0   # < 1.0 → market cap below realized cap (capitulation)
+MVRV_TOP_THRESHOLD           = 3.5   # > 3.5 → historically overbought (potential top)
+ONCHAIN_POLL_INTERVAL_MIN    = 60    # Fetch on-chain data every 60 minutes
 
 
 # ─── Scheduler ───────────────────────────────────────────────────────────────

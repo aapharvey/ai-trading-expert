@@ -39,7 +39,7 @@ _LONG_SIGNALS = {
     # Block 4 — Sentiment (contrarian: fear → buy)
     "EXTREME_FEAR", "FEAR",
     # Block 5 — On-chain
-    "EXCHANGE_OUTFLOW_SPIKE", "WHALE_ACCUMULATION", "SOPR_BOTTOM_SIGNAL",
+    "EXCHANGE_OUTFLOW_SPIKE", "WHALE_ACCUMULATION", "MVRV_BOTTOM_SIGNAL",
     # Block 6 — News
     "NEWS_BULLISH_MAJOR",
 }
@@ -60,7 +60,7 @@ _SHORT_SIGNALS = {
     # Block 4 — Sentiment (contrarian: greed → sell)
     "EXTREME_GREED", "GREED",
     # Block 5 — On-chain
-    "EXCHANGE_INFLOW_SPIKE", "SOPR_TOP_SIGNAL",
+    "EXCHANGE_INFLOW_SPIKE", "MVRV_TOP_SIGNAL",
     # Block 6 — News
     "NEWS_BEARISH_MAJOR",
 }
@@ -288,8 +288,8 @@ class ConfluenceEngine:
             "EXCHANGE_INFLOW_SPIKE":         "Exchange inflow spike (sell pressure)",
             "EXCHANGE_OUTFLOW_SPIKE":        "Exchange outflow spike (accumulation)",
             "WHALE_ACCUMULATION":            "Whale accumulation detected",
-            "SOPR_BOTTOM_SIGNAL":            "SOPR < 1 (holders selling at loss — potential bottom)",
-            "SOPR_TOP_SIGNAL":               "SOPR > 1.04 (profit taking — potential top)",
+            "MVRV_BOTTOM_SIGNAL":            "MVRV < 1.0 (market below realized cap — capitulation)",
+            "MVRV_TOP_SIGNAL":               "MVRV > 3.5 (historically overbought — potential top)",
             # News (Block 6)
             "NEWS_BULLISH_MAJOR":            "Majority of recent news is bullish",
             "NEWS_BEARISH_MAJOR":            "Majority of recent news is bearish",
