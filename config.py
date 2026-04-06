@@ -143,7 +143,7 @@ FEAR_GREED_EXTREME_GREED  = 80    # index >= this → EXTREME_GREED signal
 
 # ─── News (CryptoPanic) ───────────────────────────────────────────────────────
 
-CRYPTOPANIC_BASE_URL      = "https://cryptopanic.com/api/v1/posts/"
+CRYPTOPANIC_BASE_URL      = "https://cryptopanic.com/api/developer/v2/posts/"
 # Two separate calls: filter=bullish and filter=bearish (last 24h posts counted)
 # Signal fires when one side has >= THRESHOLD posts vs the other
 NEWS_DIRECTION_THRESHOLD  = 3     # bullish_count - bearish_count >= this → signal
