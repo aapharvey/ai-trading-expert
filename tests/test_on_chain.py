@@ -1,5 +1,5 @@
 """
-Phase 2 tests: OnChainAnalyzer — Glassnode exchange netflow and SOPR.
+Phase 2 tests: OnChainAnalyzer — Glassnode exchange netflow (z-score) and SOPR.
 All external calls mocked.
 """
 
@@ -15,13 +15,12 @@ import config
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-def make_glassnode_response(value: float) -> requests.Response:
+def make_glassnode_history(values: list) -> requests.Response:
+    """Build a Glassnode-style response with multiple daily data points."""
     resp = requests.Response()
     resp.status_code = 200
-    resp._content = json.dumps([
-        {"t": 1700000000, "v": value - 100},
-        {"t": 1700086400, "v": value},
-    ]).encode()
+    data = [{"t": 1700000000 + i * 86400, "v": float(v)} for i, v in enumerate(values)]
+    resp._content = json.dumps(data).encode()
     return resp
 
 
@@ -30,6 +29,15 @@ def make_glassnode_empty() -> requests.Response:
     resp.status_code = 200
     resp._content = json.dumps([]).encode()
     return resp
+
+
+def flat_history(baseline: float, today: float, n: int = 8) -> list:
+    """
+    Returns n values: (n-1) baseline entries + 1 today.
+    When baseline values are all equal, std=0 → fallback std=1.0,
+    so z_score = (today - baseline) / 1.0 — easy to reason about in tests.
+    """
+    return [baseline] * (n - 1) + [today]
 
 
 # ─── Tests: Skipped when no API key ──────────────────────────────────────────
@@ -50,46 +58,50 @@ class TestNoAPIKey:
             config.GLASSNODE_API_KEY = original
 
 
-# ─── Tests: Exchange Netflow ──────────────────────────────────────────────────
+# ─── Tests: Exchange Netflow (z-score based) ──────────────────────────────────
 
 class TestExchangeNetflow:
     def test_inflow_spike_signal(self, mocker):
+        """Today's netflow far above baseline (z >> 2) → INFLOW_SPIKE."""
         config.GLASSNODE_API_KEY = "test_key"
-        # inflow=5000, outflow=1000 → netflow=+4000 → INFLOW_SPIKE
+        # inflow baseline=1000, today=5000; outflow constant 1000
+        # netflows: [0]*7 + [4000]; z_score = 4000/1.0 >> 2.0 → spike
         mocker.patch(
             "requests.get",
             side_effect=[
-                make_glassnode_response(5000.0),   # inflow
-                make_glassnode_response(1000.0),   # outflow
-                make_glassnode_response(1.01),     # SOPR neutral
+                make_glassnode_history(flat_history(1000.0, 5000.0)),  # inflow
+                make_glassnode_history(flat_history(1000.0, 1000.0)),  # outflow
+                make_glassnode_history([1.0, 1.01]),                   # SOPR neutral
             ],
         )
         result = OnChainAnalyzer().analyze()
         assert "EXCHANGE_INFLOW_SPIKE" in result.signals
 
     def test_outflow_spike_signal(self, mocker):
+        """Today's netflow far below baseline (z << -2) → OUTFLOW_SPIKE."""
         config.GLASSNODE_API_KEY = "test_key"
-        # inflow=500, outflow=5000 → netflow=-4500 → OUTFLOW_SPIKE (bullish)
+        # inflow constant 1000; outflow baseline=1000, today=5000
+        # netflows: [0]*7 + [-4000]; z_score = -4000 << -2.0 → spike
         mocker.patch(
             "requests.get",
             side_effect=[
-                make_glassnode_response(500.0),    # inflow
-                make_glassnode_response(5000.0),   # outflow
-                make_glassnode_response(1.01),     # SOPR neutral
+                make_glassnode_history(flat_history(1000.0, 1000.0)),  # inflow
+                make_glassnode_history(flat_history(1000.0, 5000.0)),  # outflow
+                make_glassnode_history([1.0, 1.01]),                   # SOPR neutral
             ],
         )
         result = OnChainAnalyzer().analyze()
         assert "EXCHANGE_OUTFLOW_SPIKE" in result.signals
 
     def test_normal_flow_no_signal(self, mocker):
+        """All days equal netflow → z_score=0, no spike signal."""
         config.GLASSNODE_API_KEY = "test_key"
-        # inflow=1200, outflow=1000 → netflow=+200 (below threshold)
         mocker.patch(
             "requests.get",
             side_effect=[
-                make_glassnode_response(1200.0),
-                make_glassnode_response(1000.0),
-                make_glassnode_response(1.01),
+                make_glassnode_history([1000.0] * 8),   # inflow constant
+                make_glassnode_history([1000.0] * 8),   # outflow constant
+                make_glassnode_history([1.0, 1.01]),    # SOPR neutral
             ],
         )
         result = OnChainAnalyzer().analyze()
@@ -97,57 +109,77 @@ class TestExchangeNetflow:
         assert "EXCHANGE_OUTFLOW_SPIKE" not in result.signals
 
     def test_netflow_value_stored(self, mocker):
+        """Today's netflow = inflow - outflow is stored on the result."""
         config.GLASSNODE_API_KEY = "test_key"
+        # inflow=1000, outflow=800 every day → netflow=200, no spike
         mocker.patch(
             "requests.get",
             side_effect=[
-                make_glassnode_response(3000.0),
-                make_glassnode_response(1000.0),
-                make_glassnode_response(1.01),
+                make_glassnode_history([1000.0] * 8),   # inflow
+                make_glassnode_history([800.0] * 8),    # outflow
+                make_glassnode_history([1.0, 1.01]),    # SOPR
             ],
         )
         result = OnChainAnalyzer().analyze()
         assert result.exchange_netflow is not None
-        assert abs(result.exchange_netflow - 2000.0) < 0.1
+        assert abs(result.exchange_netflow - 200.0) < 0.1
+
+    def test_insufficient_history_no_spike(self, mocker):
+        """Less than 3 netflow data points → spike detection skipped."""
+        config.GLASSNODE_API_KEY = "test_key"
+        mocker.patch(
+            "requests.get",
+            side_effect=[
+                make_glassnode_history([5000.0, 5000.0]),   # only 2 points
+                make_glassnode_history([1000.0, 1000.0]),
+                make_glassnode_history([1.0, 1.01]),
+            ],
+        )
+        result = OnChainAnalyzer().analyze()
+        assert "EXCHANGE_INFLOW_SPIKE" not in result.signals
+        assert result.exchange_netflow is None
 
 
 # ─── Tests: SOPR ─────────────────────────────────────────────────────────────
 
 class TestSOPR:
     def test_sopr_bottom_signal(self, mocker):
+        """SOPR < 0.95 → SOPR_BOTTOM_SIGNAL."""
         config.GLASSNODE_API_KEY = "test_key"
         mocker.patch(
             "requests.get",
             side_effect=[
-                make_glassnode_response(1000.0),  # inflow (neutral)
-                make_glassnode_response(1000.0),  # outflow (neutral)
-                make_glassnode_response(0.97),    # SOPR < 0.98 → BOTTOM
+                make_glassnode_history([1000.0] * 8),   # inflow neutral
+                make_glassnode_history([1000.0] * 8),   # outflow neutral
+                make_glassnode_history([1.0, 0.94]),    # SOPR < 0.95
             ],
         )
         result = OnChainAnalyzer().analyze()
         assert "SOPR_BOTTOM_SIGNAL" in result.signals
 
     def test_sopr_top_signal(self, mocker):
+        """SOPR > 1.07 → SOPR_TOP_SIGNAL."""
         config.GLASSNODE_API_KEY = "test_key"
         mocker.patch(
             "requests.get",
             side_effect=[
-                make_glassnode_response(1000.0),
-                make_glassnode_response(1000.0),
-                make_glassnode_response(1.06),   # SOPR > 1.04 → TOP
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1.0, 1.08]),    # SOPR > 1.07
             ],
         )
         result = OnChainAnalyzer().analyze()
         assert "SOPR_TOP_SIGNAL" in result.signals
 
     def test_sopr_neutral(self, mocker):
+        """SOPR in 0.95–1.07 range → no signal."""
         config.GLASSNODE_API_KEY = "test_key"
         mocker.patch(
             "requests.get",
             side_effect=[
-                make_glassnode_response(1000.0),
-                make_glassnode_response(1000.0),
-                make_glassnode_response(1.01),   # SOPR neutral range
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1.0, 1.01]),    # SOPR in neutral range
             ],
         )
         result = OnChainAnalyzer().analyze()
@@ -155,54 +187,63 @@ class TestSOPR:
         assert "SOPR_TOP_SIGNAL" not in result.signals
 
     def test_sopr_value_stored(self, mocker):
+        """SOPR value from API is stored on the result."""
         config.GLASSNODE_API_KEY = "test_key"
         mocker.patch(
             "requests.get",
             side_effect=[
-                make_glassnode_response(1000.0),
-                make_glassnode_response(1000.0),
-                make_glassnode_response(0.95),
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1.0, 0.94]),
             ],
         )
         result = OnChainAnalyzer().analyze()
         assert result.sopr is not None
-        assert abs(result.sopr - 0.95) < 0.001
+        assert abs(result.sopr - 0.94) < 0.001
+
+    def test_sopr_boundary_bottom(self, mocker):
+        """SOPR exactly at 0.95 → no signal (threshold is strictly < 0.95)."""
+        config.GLASSNODE_API_KEY = "test_key"
+        mocker.patch(
+            "requests.get",
+            side_effect=[
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1.0, 0.95]),
+            ],
+        )
+        result = OnChainAnalyzer().analyze()
+        assert "SOPR_BOTTOM_SIGNAL" not in result.signals
+
+    def test_sopr_boundary_top(self, mocker):
+        """SOPR exactly at 1.07 → no signal (threshold is strictly > 1.07)."""
+        config.GLASSNODE_API_KEY = "test_key"
+        mocker.patch(
+            "requests.get",
+            side_effect=[
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1.0, 1.07]),
+            ],
+        )
+        result = OnChainAnalyzer().analyze()
+        assert "SOPR_TOP_SIGNAL" not in result.signals
 
 
-# ─── Tests: Signal generation ─────────────────────────────────────────────────
+# ─── Tests: _sopr_signals unit tests ─────────────────────────────────────────
 
-class TestSignalGeneration:
-    def test_inflow_spike_signal_generated(self):
-        analyzer = OnChainAnalyzer()
-        signals = analyzer._generate_signals(netflow=2000.0, sopr=1.01)
-        assert "EXCHANGE_INFLOW_SPIKE" in signals
+class TestSoprSignals:
+    def test_below_bottom_threshold(self):
+        assert OnChainAnalyzer()._sopr_signals(0.94) == ["SOPR_BOTTOM_SIGNAL"]
 
-    def test_outflow_spike_signal_generated(self):
-        analyzer = OnChainAnalyzer()
-        signals = analyzer._generate_signals(netflow=-2000.0, sopr=1.01)
-        assert "EXCHANGE_OUTFLOW_SPIKE" in signals
+    def test_above_top_threshold(self):
+        assert OnChainAnalyzer()._sopr_signals(1.08) == ["SOPR_TOP_SIGNAL"]
 
-    def test_sopr_bottom_signal_generated(self):
-        analyzer = OnChainAnalyzer()
-        signals = analyzer._generate_signals(netflow=0, sopr=0.97)
-        assert "SOPR_BOTTOM_SIGNAL" in signals
+    def test_neutral_range(self):
+        assert OnChainAnalyzer()._sopr_signals(1.01) == []
 
-    def test_sopr_top_signal_generated(self):
-        analyzer = OnChainAnalyzer()
-        signals = analyzer._generate_signals(netflow=0, sopr=1.05)
-        assert "SOPR_TOP_SIGNAL" in signals
-
-    def test_no_signals_when_none_values(self):
-        analyzer = OnChainAnalyzer()
-        signals = analyzer._generate_signals(netflow=None, sopr=None)
-        assert signals == []
-
-    def test_multiple_signals_possible(self):
-        analyzer = OnChainAnalyzer()
-        # Both netflow spike AND sopr signal
-        signals = analyzer._generate_signals(netflow=-3000.0, sopr=0.96)
-        assert "EXCHANGE_OUTFLOW_SPIKE" in signals
-        assert "SOPR_BOTTOM_SIGNAL" in signals
+    def test_none_returns_empty(self):
+        assert OnChainAnalyzer()._sopr_signals(None) == []
 
 
 # ─── Tests: Caching ──────────────────────────────────────────────────────────
@@ -213,9 +254,9 @@ class TestCaching:
         mock_get = mocker.patch(
             "requests.get",
             side_effect=[
-                make_glassnode_response(1000.0),
-                make_glassnode_response(1000.0),
-                make_glassnode_response(1.01),
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1.0, 1.01]),
             ],
         )
         analyzer = OnChainAnalyzer()
@@ -228,20 +269,19 @@ class TestCaching:
         mock_get = mocker.patch(
             "requests.get",
             side_effect=[
-                make_glassnode_response(1000.0),
-                make_glassnode_response(1000.0),
-                make_glassnode_response(1.01),
-                make_glassnode_response(1000.0),
-                make_glassnode_response(1000.0),
-                make_glassnode_response(1.01),
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1.0, 1.01]),
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1000.0] * 8),
+                make_glassnode_history([1.0, 1.01]),
             ],
         )
         analyzer = OnChainAnalyzer()
         analyzer.analyze()
-        # Expire cache
         analyzer._cached_at = datetime.now(timezone.utc) - timedelta(minutes=61)
         analyzer.analyze()
-        assert mock_get.call_count == 6  # 3 per analyze call
+        assert mock_get.call_count == 6  # 3 per analyze() call
 
 
 # ─── Tests: Graceful failure ──────────────────────────────────────────────────

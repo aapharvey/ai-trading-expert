@@ -144,21 +144,24 @@ FEAR_GREED_EXTREME_GREED  = 80    # index >= this → EXTREME_GREED signal
 # ─── News (CryptoPanic) ───────────────────────────────────────────────────────
 
 CRYPTOPANIC_BASE_URL      = "https://cryptopanic.com/api/v1/posts/"
-# Minimum number of bullish/bearish posts (last 10) to trigger signal
-NEWS_BULLISH_THRESHOLD    = 6
-NEWS_BEARISH_THRESHOLD    = 6
-NEWS_POLL_INTERVAL_MIN    = 15    # Fetch news every 15 minutes
+# Two separate calls: filter=bullish and filter=bearish (last 24h posts counted)
+# Signal fires when one side has >= THRESHOLD posts vs the other
+NEWS_DIRECTION_THRESHOLD  = 3     # bullish_count - bearish_count >= this → signal
+NEWS_MIN_POSTS            = 2     # minimum posts needed to form an opinion
+NEWS_POLL_INTERVAL_MIN    = 20    # Fetch news every 20 minutes
 
 
 # ─── On-chain (Glassnode) ─────────────────────────────────────────────────────
 
 GLASSNODE_BASE_URL        = "https://api.glassnode.com/v1/metrics"
-# Exchange netflow: BTC moved to/from exchanges (daily)
-EXCHANGE_INFLOW_THRESHOLD  = 1000.0   # BTC inflow spike (bearish)
-EXCHANGE_OUTFLOW_THRESHOLD = 1000.0   # BTC outflow spike (bullish)
-SOPR_BOTTOM_THRESHOLD      = 0.98     # SOPR < this → holders selling at loss (dip)
-SOPR_TOP_THRESHOLD         = 1.04     # SOPR > this → profit taking (top signal)
-ONCHAIN_POLL_INTERVAL_MIN  = 60       # Fetch on-chain data every 60 minutes
+# Exchange netflow: spike = current value deviates > N standard deviations
+# from the 7-day rolling mean (avoids hardcoded absolute BTC thresholds)
+EXCHANGE_FLOW_STD_MULTIPLIER = 2.0   # signal when |netflow| > mean ± 2σ
+EXCHANGE_FLOW_HISTORY_DAYS   = 7     # rolling window for mean/std calculation
+# SOPR thresholds (Expert-validated)
+SOPR_BOTTOM_THRESHOLD      = 0.95    # < 0.95 for 2+ days → real capitulation bottom
+SOPR_TOP_THRESHOLD         = 1.07    # > 1.07 → extended profit taking, potential top
+ONCHAIN_POLL_INTERVAL_MIN  = 60      # Fetch on-chain data every 60 minutes
 
 
 # ─── Scheduler ───────────────────────────────────────────────────────────────
