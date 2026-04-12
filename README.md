@@ -1,7 +1,7 @@
 # BTC Trading Signal System
 
 Automated trading signal monitor for BTC/USDT perpetual futures on Bybit.
-Sends signals to Telegram. No auto-trading — manual execution only.
+Sends signals to Telegram. No auto-trading — manual execution only
 
 ## Features
 
