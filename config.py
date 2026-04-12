@@ -69,6 +69,28 @@ TP1_ATR_MULTIPLIER  = 2.0
 TP2_ATR_MULTIPLIER  = 3.5
 
 
+# ─── Liquidity Map (Block 7) ─────────────────────────────────────────────────
+
+# Order wall: cluster within this % of price is scanned
+LIQUIDITY_SCAN_RANGE_PCT    = 0.02    # 2% above/below price
+# A cluster is a wall when its volume > this multiple of mean cluster volume
+LIQUIDITY_WALL_MULTIPLIER   = 5.0
+# Delta: buy_vol/total_vol threshold to signal BULL/BEAR
+LIQUIDITY_DELTA_THRESHOLD   = 0.55    # >55% buys → BULL; <45% → BEAR
+
+
+# ─── Volume Profile (Block 8) ─────────────────────────────────────────────────
+
+# Candles used for current session profile (1h candles = 24h window)
+VP_SESSION_CANDLES          = 24
+# Fraction of volume defining the value area
+VP_VALUE_AREA_PCT           = 0.70
+# Price bucket size in USD for volume distribution
+VP_BUCKET_SIZE              = 50.0
+# How close price must be to POC to fire AT_POC signal (%)
+VP_AT_POC_THRESHOLD_PCT     = 0.005   # 0.5%
+
+
 # ─── Order Flow ──────────────────────────────────────────────────────────────
 
 OI_CHANGE_THRESHOLD_PCT = 2.0     # OI change > 2% in 1h = significant
@@ -120,6 +142,18 @@ SIGNAL_WEIGHTS = {
     "EXTREME_GREED":                 0.9,
     "FEAR":                          0.4,
     "GREED":                         0.4,
+    # Liquidity Map (Block 7)
+    "ORDER_WALL_BELOW":              0.9,   # large bid wall below — strong support magnet
+    "ORDER_WALL_ABOVE":              0.9,   # large ask wall above — strong resistance magnet
+    "DELTA_BULL":                    0.7,   # buyers dominating recent trades
+    "DELTA_BEAR":                    0.7,   # sellers dominating recent trades
+    # Volume Profile (Block 8)
+    "PRICE_AT_POC_FROM_BELOW":       0.8,   # returning to POC from below → LONG
+    "PRICE_AT_POC_FROM_ABOVE":       0.8,   # returning to POC from above → SHORT
+    "ABOVE_VALUE_AREA":              0.7,   # price broke above VAH → momentum LONG
+    "BELOW_VALUE_AREA":              0.7,   # price broke below VAL → momentum SHORT
+    "NAKED_POC_ABOVE":               0.6,   # unvisited POC above → magnet LONG
+    "NAKED_POC_BELOW":               0.6,   # unvisited POC below → magnet SHORT
     # News (Block 6)
     "NEWS_BULLISH_MAJOR":            0.8,
     "NEWS_BEARISH_MAJOR":            0.8,

@@ -268,6 +268,39 @@ class BybitClient:
         )
         return result
 
+    def get_recent_trades(
+        self,
+        symbol: str = config.SYMBOL,
+        limit: int = 500,
+        category: str = config.CATEGORY,
+    ) -> list[dict]:
+        """
+        Fetch recent public trades.
+
+        Returns list of dicts (oldest first):
+          timestamp, price, qty, side ("Buy" | "Sell")
+        """
+        body = self._get(
+            "/v5/market/recent-trade",
+            params={
+                "category": category,
+                "symbol":   symbol,
+                "limit":    limit,
+            },
+        )
+        raw = self._result_list(body)
+        result = [
+            {
+                "timestamp": int(row["time"]),
+                "price":     float(row["price"]),
+                "qty":       float(row["size"]),
+                "side":      row["side"],   # "Buy" or "Sell"
+            }
+            for row in reversed(raw)
+        ]
+        log.debug("get_recent_trades(%s): %d trades", symbol, len(result))
+        return result
+
     def get_orderbook(
         self,
         symbol: str = config.SYMBOL,
