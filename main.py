@@ -2,8 +2,7 @@
 BTC Trading Signal System — Main Entry Point.
 
 Runs continuously, polling Bybit every 60 seconds.
-Phase 2: Sentiment (Fear&Greed + CryptoPanic) and On-chain (CoinMetrics) added.
-Phase 3: Signal Journal + Outcome Checker (paper trading validation).
+Phase 4: Entry Zone Guard + Liquidity Map (Block 7) + Volume Profile (Block 8).
 Press Ctrl+C to stop gracefully.
 """
 
@@ -184,9 +183,9 @@ class TradingBot:
     # ─── Lifecycle ───────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        log.info("Starting BTC Trading Signal System (Phase 2)...")
+        log.info("Starting BTC Trading Signal System (Phase 4)...")
 
-        # Log Phase 2 module status
+        # Log module status
         if config.CRYPTOPANIC_API_KEY:
             log.info("CryptoPanic news: ENABLED")
         else:
@@ -195,10 +194,10 @@ class TradingBot:
         log.info("CoinMetrics on-chain: ENABLED (free, no key required)")
 
         self.telegram.send_alert(
-            "🟢 <b>BTC Signal System started (Phase 2)</b>\n"
-            f"Fear&Greed: {'on' if True else 'off'} | "
+            "🟢 <b>BTC Signal System started (Phase 4)</b>\n"
+            f"Fear&Greed: on | "
             f"News: {'on' if config.CRYPTOPANIC_API_KEY else 'off'} | "
-            f"On-chain: on (CoinMetrics)"
+            f"On-chain: on | Liquidity: on | VolumeProfile: on"
         )
 
         # Schedule jobs
