@@ -123,7 +123,6 @@ SIGNAL_WEIGHTS = {
     "MACD_CROSS_DOWN":         0.7,
     "MACD_DIVERGENCE_BULL":    1.0,
     "MACD_DIVERGENCE_BEAR":    1.0,
-    "BB_SQUEEZE":              0.5,
     "BB_BREAKOUT_UP":          0.8,
     "BB_BREAKOUT_DOWN":        0.8,
     # Order Flow (Block 3)
