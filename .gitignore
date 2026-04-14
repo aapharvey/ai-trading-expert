@@ -23,6 +23,9 @@ env/
 *.swp
 *.swo
 
+# Backtest data (large files, local only)
+data/
+
 # Logs
 logs/
 *.log
