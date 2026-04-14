@@ -14,7 +14,9 @@ from src.models.signals import Direction, TradeSignal
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-def make_pa(signals=None, price=95000.0, sup=93000.0, res=97000.0) -> PriceActionResult:
+def make_pa(signals=None, price=95000.0, sup=None, res=97000.0) -> PriceActionResult:
+    if sup is None:
+        sup = price * 0.999
     return PriceActionResult(
         trend="BULLISH" if "BULLISH_BREAK" in (signals or []) else "RANGE",
         key_supports=[sup],

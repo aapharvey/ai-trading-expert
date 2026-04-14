@@ -75,11 +75,14 @@ _SHORT_SIGNALS = {
     "PRICE_AT_POC_FROM_ABOVE", "BELOW_VALUE_AREA", "NAKED_POC_BELOW",
 }
 
-# Maximum possible score (sum of all weights for one direction)
+# Maximum possible score (sum of all weights for one direction) — for reference only
 _MAX_SCORE = sum(
     w for sig, w in config.SIGNAL_WEIGHTS.items()
     if sig in _LONG_SIGNALS
 )
+
+# Realistic normalization scale: expected max raw score per cycle (top 5 concurrent signals)
+_NORM_SCALE = 4.0
 
 
 class ConfluenceEngine:
@@ -188,8 +191,7 @@ class ConfluenceEngine:
         """Map raw weighted score to 1–5 strength."""
         if raw <= 0:
             return 0
-        # Scale relative to ~40% of max score = strength 5
-        pct = raw / (_MAX_SCORE * 0.4)
+        pct = raw / _NORM_SCALE
         return min(5, max(1, round(pct * 5)))
 
     # ─── Trade level construction ─────────────────────────────────────────────
@@ -305,11 +307,13 @@ class ConfluenceEngine:
                 if level and abs(level - price) / price <= scan_pct_vp:
                     return level, label
 
-        # 3. Nearest support / resistance
+        # 3. Nearest support / resistance (only if within 1.5% of price)
         if direction == Direction.LONG and pa.nearest_support:
-            return pa.nearest_support, "support"
+            if abs(pa.nearest_support - price) / price <= 0.015:
+                return pa.nearest_support, "support"
         if direction == Direction.SHORT and pa.nearest_resistance:
-            return pa.nearest_resistance, "resistance"
+            if abs(pa.nearest_resistance - price) / price <= 0.015:
+                return pa.nearest_resistance, "resistance"
 
         # 4. Current price fallback
         return price, "current_price"
