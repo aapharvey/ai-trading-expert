@@ -234,19 +234,22 @@ class TestAntiSpam:
 
     def test_can_send_true_when_no_previous(self):
         engine = ConfluenceEngine()
-        assert engine._can_send(Direction.LONG) is True
+        now = datetime.now(timezone.utc)
+        assert engine._can_send(Direction.LONG, now) is True
 
     def test_can_send_false_within_cooldown(self):
         engine = ConfluenceEngine()
-        engine._last_signal[Direction.LONG] = datetime.now(timezone.utc)
-        assert engine._can_send(Direction.LONG) is False
+        now = datetime.now(timezone.utc)
+        engine._last_signal[Direction.LONG] = now - timedelta(hours=1)
+        assert engine._can_send(Direction.LONG, now) is False
 
     def test_can_send_true_after_cooldown_expires(self):
         engine = ConfluenceEngine()
         import config
-        past = datetime.now(timezone.utc) - timedelta(hours=config.ANTI_SPAM_HOURS + 1)
+        now = datetime.now(timezone.utc)
+        past = now - timedelta(hours=config.ANTI_SPAM_HOURS + 1)
         engine._last_signal[Direction.LONG] = past
-        assert engine._can_send(Direction.LONG) is True
+        assert engine._can_send(Direction.LONG, now) is True
 
 
 # ─── Tests: Signal labels ────────────────────────────────────────────────────
@@ -279,3 +282,43 @@ class TestTimeframe:
         signal = engine.evaluate(pa, tech, of_)
         assert signal is not None
         assert signal.created_at is not None
+
+
+# ─── Tests: Backtest mode (now + norm_scale) ─────────────────────────────────
+
+class TestBacktestMode:
+    def test_backtest_cooldown_uses_candle_time(self):
+        """Cooldown рахується від часу свічки, а не від реального часу."""
+        engine = ConfluenceEngine()
+        pa, tech, of_ = strong_long_inputs()
+        import config
+
+        t1 = datetime(2024, 5, 1, 10, 0, tzinfo=timezone.utc)
+        signal1 = engine.evaluate(pa, tech, of_, now=t1, norm_scale=2.5)
+        assert signal1 is not None
+
+        # Через 1 годину — cooldown ще активний
+        t2 = t1 + timedelta(hours=1)
+        signal2 = engine.evaluate(pa, tech, of_, now=t2, norm_scale=2.5)
+        assert signal2 is None
+
+        # Після закінчення cooldown — сигнал знову проходить
+        t3 = t1 + timedelta(hours=config.ANTI_SPAM_HOURS + 1)
+        signal3 = engine.evaluate(pa, tech, of_, now=t3, norm_scale=2.5)
+        assert signal3 is not None
+
+    def test_norm_scale_lower_gives_higher_or_equal_strength(self):
+        """norm_scale=2.5 дає вищий або рівний strength ніж 4.0 при однаковому raw score."""
+        engine = ConfluenceEngine()
+        raw = 1.5
+        strength_prod     = engine._normalize_score(raw)
+        strength_backtest = engine._normalize_score(raw, 2.5)
+        assert strength_backtest >= strength_prod
+
+    def test_production_behavior_unchanged_without_now(self):
+        """evaluate() без now — backward-compatible, сигнал емітується як раніше."""
+        engine = ConfluenceEngine()
+        pa, tech, of_ = strong_long_inputs()
+        signal = engine.evaluate(pa, tech, of_)
+        assert signal is not None
+        assert signal.direction == Direction.LONG

@@ -103,6 +103,12 @@ def make_fake_oi(candles: list[dict]) -> list[dict]:
     """
     Approximate OI from volume (no historical OI available via free API).
     Uses rolling volume as a proxy — directionally similar to real OI.
+
+    WARNING: volume ≠ open interest. Bybit does not provide historical OI
+    via any free public endpoint. OI-based signals (OI_LONG_BUILDUP,
+    OI_SHORT_BUILDUP, OI_LONG_UNWIND, OI_SHORT_UNWIND) will behave
+    differently in backtest vs live trading. Treat OI signal results
+    in backtests as indicative only.
     """
     return [
         {"timestamp": c["timestamp"], "open_interest": c["volume"]}
@@ -256,6 +262,7 @@ def print_report(stats: BacktestStats) -> None:
         print(" WARNING: Win rate < 45% — review signal logic and weights.")
     if stats.avg_rr < 1.5:
         print(" WARNING: Avg R:R < 1.5 — review SL/TP multipliers.")
+    print(" WARNING: OI signals use volume proxy — live results will differ.")
 
     print()
 
@@ -326,8 +333,11 @@ def run_backtest() -> list[BacktestSignal]:
         if fg_signals:
             of_result.signals = of_result.signals + fg_signals
 
-        # Evaluate confluence
-        signal = engine.evaluate(pa_result, tech_result, of_result)
+        # Evaluate confluence (pass candle time so anti-spam uses historical time, not now)
+        candle_time = datetime.fromtimestamp(
+            candles_1h[i]["timestamp"] / 1000, tz=timezone.utc
+        )
+        signal = engine.evaluate(pa_result, tech_result, of_result, now=candle_time, norm_scale=2.5)
         if signal is None:
             continue
 

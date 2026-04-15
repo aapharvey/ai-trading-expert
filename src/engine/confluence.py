@@ -106,11 +106,19 @@ class ConfluenceEngine:
         on_chain:       Optional[OnChainResult]       = None,
         liquidity:      Optional[LiquidityResult]     = None,
         volume_profile: Optional[VolumeProfileResult] = None,
+        now:            Optional[datetime]            = None,
+        norm_scale:     Optional[float]               = None,
     ) -> Optional[TradeSignal]:
         """
         Main entry point. Returns a TradeSignal or None.
         All args after `of` are optional — backward compatible.
+
+        now: override "current time" for anti-spam checks (pass candle time in backtest).
+             If None, uses datetime.now(timezone.utc) — production behavior unchanged.
+        norm_scale: override normalization scale for scoring (pass 2.5 in backtest).
+                    If None, uses module-level _NORM_SCALE=4.0 — production behavior unchanged.
         """
+        now = now or datetime.now(timezone.utc)
         all_signals = (
             pa.signals
             + tech.signals
@@ -124,8 +132,8 @@ class ConfluenceEngine:
         long_score, long_factors   = self._score(all_signals, _LONG_SIGNALS)
         short_score, short_factors = self._score(all_signals, _SHORT_SIGNALS)
 
-        long_strength  = self._normalize_score(long_score)
-        short_strength = self._normalize_score(short_score)
+        long_strength  = self._normalize_score(long_score, norm_scale)
+        short_strength = self._normalize_score(short_score, norm_scale)
 
         log.debug(
             "Confluence: LONG=%.2f(%d/5) SHORT=%.2f(%d/5) signals=%s",
@@ -145,7 +153,7 @@ class ConfluenceEngine:
             return None  # No strong enough signal
 
         # Anti-spam check
-        if not self._can_send(direction):
+        if not self._can_send(direction, now):
             log.debug("Confluence: anti-spam suppressed %s signal", direction)
             return None
 
@@ -164,8 +172,8 @@ class ConfluenceEngine:
             )
             return None
 
-        # Record last signal time
-        self._last_signal[direction] = datetime.now(timezone.utc)
+        # Record last signal time (uses candle time in backtest, real time in production)
+        self._last_signal[direction] = now
         log.info(
             "Confluence: emitting %s signal strength=%d/5 rr=%.2f",
             direction, strength, signal.rr_ratio,
@@ -187,11 +195,17 @@ class ConfluenceEngine:
                 factors.append(self._signal_to_label(sig))
         return total, factors
 
-    def _normalize_score(self, raw: float) -> int:
-        """Map raw weighted score to 1–5 strength."""
+    def _normalize_score(self, raw: float, norm_scale: Optional[float] = None) -> int:
+        """Map raw weighted score to 1–5 strength.
+
+        norm_scale: override for backtest (e.g. 2.5 for 4-block runs).
+                    Production always uses _NORM_SCALE=4.0.
+        TODO: compute norm_scale dynamically from sum of weights of active blocks.
+        """
         if raw <= 0:
             return 0
-        pct = raw / _NORM_SCALE
+        scale = norm_scale if norm_scale is not None else _NORM_SCALE
+        pct = raw / scale
         return min(5, max(1, round(pct * 5)))
 
     # ─── Trade level construction ─────────────────────────────────────────────
@@ -320,11 +334,11 @@ class ConfluenceEngine:
 
     # ─── Anti-spam ────────────────────────────────────────────────────────────
 
-    def _can_send(self, direction: Direction) -> bool:
+    def _can_send(self, direction: Direction, now: datetime) -> bool:
         last = self._last_signal.get(direction)
         if last is None:
             return True
-        elapsed = datetime.now(timezone.utc) - last
+        elapsed = now - last
         return elapsed >= timedelta(hours=config.ANTI_SPAM_HOURS)
 
     def reset_cooldown(self, direction: Optional[Direction] = None) -> None:
