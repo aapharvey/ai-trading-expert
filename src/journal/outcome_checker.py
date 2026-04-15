@@ -13,12 +13,14 @@ Classification rules (per candle, in order):
 """
 
 from datetime import datetime, timezone
+from typing import Optional
 
 from logger import get_logger
 from src.bybit_client import BybitClient
 from src.journal.signal_journal import (
     SignalJournal, WIN_FULL, WIN_PARTIAL, LOSS, EXPIRED,
 )
+from src.telegram_notifier import TelegramNotifier
 
 log = get_logger(__name__)
 
@@ -29,9 +31,10 @@ class OutcomeChecker:
     Stateless — safe to call repeatedly from a scheduler.
     """
 
-    def __init__(self, journal: SignalJournal, client: BybitClient):
-        self._journal = journal
-        self._client  = client
+    def __init__(self, journal: SignalJournal, client: BybitClient, telegram: Optional[TelegramNotifier] = None):
+        self._journal  = journal
+        self._client   = client
+        self._telegram = telegram
 
     def check_pending(self) -> int:
         """
@@ -48,6 +51,7 @@ class OutcomeChecker:
             try:
                 outcome, exit_price = self._resolve(row)
                 self._journal.update_outcome(row["id"], outcome, exit_price)
+                self._notify(row, outcome, exit_price)
                 resolved += 1
             except Exception as exc:
                 log.warning("Outcome checker: failed to resolve signal #%d: %s", row["id"], exc)
@@ -55,6 +59,22 @@ class OutcomeChecker:
         if resolved:
             log.info("Outcome checker: resolved %d signal(s)", resolved)
         return resolved
+
+    # ─── Telegram notification ───────────────────────────────────────────────
+
+    def _notify(self, row: dict, outcome: str, exit_price: float) -> None:
+        """Send outcome reply to the original Telegram signal message if possible."""
+        if not self._telegram:
+            return
+        message_id = row.get("telegram_message_id")
+        if not message_id:
+            return
+        self._telegram.send_outcome_reply(
+            message_id=message_id,
+            outcome=outcome,
+            exit_price=exit_price,
+            direction=row["direction"],
+        )
 
     # ─── Resolution logic ────────────────────────────────────────────────────
 

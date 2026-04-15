@@ -4,6 +4,8 @@ Sends trading signals, system alerts, and heartbeats to a Telegram chat.
 Uses the Telegram Bot API directly via requests (no async dependency).
 """
 
+from typing import Optional
+
 import requests
 
 import config
@@ -39,9 +41,9 @@ class TelegramNotifier:
 
     # ─── Internal ────────────────────────────────────────────────────────────
 
-    def _send(self, text: str, parse_mode: str = "HTML") -> bool:
+    def _send(self, text: str, parse_mode: str = "HTML", reply_to_message_id: Optional[int] = None) -> Optional[int]:
         """
-        Send a text message. Returns True on success, False on any error.
+        Send a text message. Returns Telegram message_id on success, None on error.
         Truncates messages longer than Telegram's limit.
         """
         if len(text) > _MAX_MESSAGE_LEN:
@@ -53,24 +55,28 @@ class TelegramNotifier:
             "text":       text,
             "parse_mode": parse_mode,
         }
+        if reply_to_message_id is not None:
+            payload["reply_to_message_id"] = reply_to_message_id
+
         try:
             resp = self._session.post(url, json=payload, timeout=_SEND_TIMEOUT)
             resp.raise_for_status()
             body = resp.json()
             if not body.get("ok"):
                 raise TelegramError(body.get("description", "unknown error"))
-            log.debug("Telegram message sent (chat=%s)", self._chat_id)
-            return True
+            message_id = body["result"]["message_id"]
+            log.debug("Telegram message sent (chat=%s, id=%d)", self._chat_id, message_id)
+            return message_id
         except TelegramError as exc:
             log.error("Telegram API error: %s", exc)
         except requests.RequestException as exc:
             log.error("Telegram network error: %s", exc)
-        return False
+        return None
 
     # ─── Public API ──────────────────────────────────────────────────────────
 
-    def send_signal(self, signal: TradeSignal) -> bool:
-        """Format and send a trading signal message."""
+    def send_signal(self, signal: TradeSignal) -> Optional[int]:
+        """Format and send a trading signal message. Returns message_id or None on error."""
         direction_emoji = "📈" if signal.direction == Direction.LONG else "📉"
         risk_pct = abs(signal.entry_mid - signal.stop_loss) / signal.entry_mid * 100
 
@@ -102,10 +108,28 @@ class TelegramNotifier:
         )
         return self._send(text)
 
+    def send_outcome_reply(
+        self,
+        message_id: int,
+        outcome: str,
+        exit_price: float,
+        direction: str,
+    ) -> bool:
+        """Send outcome notification as a reply to the original signal message."""
+        _labels = {
+            "WIN_FULL":    f"✅ <b>TP2 досягнуто</b> | вихід: <b>${exit_price:,.0f}</b>",
+            "WIN_PARTIAL": f"🟡 <b>TP1 досягнуто</b> | вихід: <b>${exit_price:,.0f}</b>",
+            "LOSS":        f"❌ <b>SL спрацював</b> | вихід: <b>${exit_price:,.0f}</b>",
+            "EXPIRED":     "⏱ <b>Час вийшов</b> | результат невизначений",
+        }
+        text = _labels.get(outcome, f"ℹ️ Результат: {outcome} | ${exit_price:,.0f}")
+        log.info("Sending outcome reply (msg_id=%d): %s", message_id, outcome)
+        return self._send(text, reply_to_message_id=message_id) is not None
+
     def send_alert(self, message: str) -> bool:
         """Send a plain system alert message."""
         log.info("Sending alert: %s", message)
-        return self._send(f"ℹ️ {message}")
+        return self._send(f"ℹ️ {message}") is not None
 
     def send_heartbeat(self, price: float, trend: str, rsi: float, funding: float) -> bool:
         """Send hourly status heartbeat."""
@@ -115,7 +139,7 @@ class TelegramNotifier:
             f"Trend: {trend} | RSI(1h): {rsi:.1f} | Funding: {funding:+.4f}%\n"
             f"<i>System running normally.</i>"
         )
-        return self._send(text)
+        return self._send(text) is not None
 
     def send_stats_report(self, stats: dict) -> bool:
         """Send weekly performance report from the signal journal."""
@@ -123,7 +147,7 @@ class TelegramNotifier:
             return self._send(
                 f"<b>Weekly Signal Report ({stats.get('days', 7)}d)</b>\n"
                 f"No resolved signals in this period."
-            )
+            ) is not None
 
         total    = stats["total"]
         wins     = stats["win_full"] + stats["win_partial"]
@@ -142,8 +166,8 @@ class TelegramNotifier:
             f"LONG: {stats['long_count']} | SHORT: {stats['short_count']}"
         )
         log.info("Sending weekly stats report to Telegram")
-        return self._send(text)
+        return self._send(text) is not None
 
     def test_connection(self) -> bool:
         """Send a test message to verify bot credentials. Returns True if OK."""
-        return self._send("🔧 <b>BTC Signal Bot</b> — connection test OK ✅")
+        return self._send("🔧 <b>BTC Signal Bot</b> — connection test OK ✅") is not None

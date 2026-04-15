@@ -29,22 +29,28 @@ _CHECK_HOURS = {
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS signals (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp        TEXT    NOT NULL,
-    direction        TEXT    NOT NULL,
-    strength         INTEGER NOT NULL,
-    timeframe        TEXT    NOT NULL,
-    entry_mid        REAL    NOT NULL,
-    tp1              REAL    NOT NULL,
-    tp2              REAL    NOT NULL,
-    stop_loss        REAL    NOT NULL,
-    rr_ratio         REAL    NOT NULL,
-    factors          TEXT    NOT NULL,
-    check_after_hours INTEGER NOT NULL,
-    outcome          TEXT,
-    exit_price       REAL,
-    checked_at       TEXT
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp           TEXT    NOT NULL,
+    direction           TEXT    NOT NULL,
+    strength            INTEGER NOT NULL,
+    timeframe           TEXT    NOT NULL,
+    entry_mid           REAL    NOT NULL,
+    tp1                 REAL    NOT NULL,
+    tp2                 REAL    NOT NULL,
+    stop_loss           REAL    NOT NULL,
+    rr_ratio            REAL    NOT NULL,
+    factors             TEXT    NOT NULL,
+    check_after_hours   INTEGER NOT NULL,
+    telegram_message_id INTEGER,
+    outcome             TEXT,
+    exit_price          REAL,
+    checked_at          TEXT
 )
+"""
+
+# Migration: add column to existing databases that predate this field
+_MIGRATE_MESSAGE_ID = """
+ALTER TABLE signals ADD COLUMN telegram_message_id INTEGER
 """
 
 
@@ -59,17 +65,28 @@ class SignalJournal:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(_CREATE_TABLE)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after initial schema (safe to run repeatedly)."""
+        existing = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(signals)")
+        }
+        if "telegram_message_id" not in existing:
+            self._conn.execute(_MIGRATE_MESSAGE_ID)
 
     def _connect(self) -> sqlite3.Connection:
         return self._conn
 
     # ─── Write ───────────────────────────────────────────────────────────────
 
-    def record(self, signal: TradeSignal) -> int:
+    def record(self, signal: TradeSignal, telegram_message_id: Optional[int] = None) -> int:
         """
         Save a new signal. Returns the row id.
         Should be called immediately after successful Telegram send.
+        Pass telegram_message_id to enable outcome reply notifications.
         """
         check_hours = _CHECK_HOURS.get(signal.timeframe, 24)
         with self._connect() as conn:
@@ -78,8 +95,8 @@ class SignalJournal:
                 INSERT INTO signals
                   (timestamp, direction, strength, timeframe,
                    entry_mid, tp1, tp2, stop_loss, rr_ratio,
-                   factors, check_after_hours)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   factors, check_after_hours, telegram_message_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     datetime.now(timezone.utc).isoformat(),
@@ -93,6 +110,7 @@ class SignalJournal:
                     signal.rr_ratio,
                     json.dumps(signal.factors),
                     check_hours,
+                    telegram_message_id,
                 ),
             )
             signal_id = cur.lastrowid

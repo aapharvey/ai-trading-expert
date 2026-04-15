@@ -43,7 +43,7 @@ class TradingBot:
         self.on_chain  = OnChainAnalyzer()     # Phase 2: CoinMetrics (cached internally)
         self.engine    = ConfluenceEngine()
         self.journal   = SignalJournal()       # Phase 3: paper trading log
-        self.checker   = OutcomeChecker(self.journal, self.client)  # Phase 3: auto-verify
+        self.checker   = OutcomeChecker(self.journal, self.client, self.telegram)  # Phase 3: auto-verify
         self.scheduler = BackgroundScheduler(timezone="UTC")
 
         # Dashboard state
@@ -106,14 +106,14 @@ class TradingBot:
             # Evaluate confluence (all 5 blocks)
             sig = self.engine.evaluate(pa_result, tech_result, of_result, sent_result, oc_result)
             if sig:
-                sent = self.telegram.send_signal(sig)
-                if sent:
+                message_id = self.telegram.send_signal(sig)
+                if message_id:
                     self._signals_sent += 1
                     direction_str = f"{sig.direction.value} [{sig.strength}/5]"
                     ts = datetime.now(timezone.utc).strftime("%H:%M UTC")
                     self._last_signal = f"{direction_str} at {ts}"
                     log.info("Signal sent: %s", direction_str)
-                    self.journal.record(sig)   # Phase 3: persist for outcome tracking
+                    self.journal.record(sig, telegram_message_id=message_id)
 
             self._print_dashboard()
 

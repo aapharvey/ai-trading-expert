@@ -13,11 +13,12 @@ from src.models.signals import TradeSignal, Direction, Timeframe
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
-def make_tg_response(ok: bool = True, status: int = 200) -> requests.Response:
+def make_tg_response(ok: bool = True, status: int = 200, message_id: int = 42) -> requests.Response:
     resp = requests.Response()
     resp.status_code = status
     resp._content = json.dumps(
-        {"ok": ok, "description": "Bad Request"} if not ok else {"ok": True, "result": {}}
+        {"ok": ok, "description": "Bad Request"} if not ok
+        else {"ok": True, "result": {"message_id": message_id}}
     ).encode()
     return resp
 
@@ -52,11 +53,11 @@ class TestTelegramNotifierInit:
 
 
 class TestSendSignal:
-    def test_returns_true_on_success(self, mocker):
-        mocker.patch("requests.Session.post", return_value=make_tg_response(ok=True))
+    def test_returns_message_id_on_success(self, mocker):
+        mocker.patch("requests.Session.post", return_value=make_tg_response(ok=True, message_id=99))
         notifier = TelegramNotifier(token="tok", chat_id="123")
         result = notifier.send_signal(make_signal())
-        assert result is True
+        assert result == 99
 
     def test_message_contains_direction(self, mocker):
         mock_post = mocker.patch("requests.Session.post", return_value=make_tg_response())
@@ -100,17 +101,17 @@ class TestSendSignal:
         payload = mock_post.call_args[1]["json"]
         assert "📉" in payload["text"]
 
-    def test_returns_false_on_telegram_error(self, mocker):
+    def test_returns_none_on_telegram_error(self, mocker):
         mocker.patch("requests.Session.post", return_value=make_tg_response(ok=False))
         notifier = TelegramNotifier(token="tok", chat_id="123")
         result = notifier.send_signal(make_signal())
-        assert result is False
+        assert result is None
 
-    def test_returns_false_on_network_error(self, mocker):
+    def test_returns_none_on_network_error(self, mocker):
         mocker.patch("requests.Session.post", side_effect=requests.ConnectionError())
         notifier = TelegramNotifier(token="tok", chat_id="123")
         result = notifier.send_signal(make_signal())
-        assert result is False
+        assert result is None
 
     def test_strength_stars_correct(self, mocker):
         mock_post = mocker.patch("requests.Session.post", return_value=make_tg_response())
