@@ -108,6 +108,7 @@ class ConfluenceEngine:
         volume_profile: Optional[VolumeProfileResult] = None,
         now:            Optional[datetime]            = None,
         norm_scale:     Optional[float]               = None,
+        tp2_multiplier: Optional[float]               = None,
     ) -> Optional[TradeSignal]:
         """
         Main entry point. Returns a TradeSignal or None.
@@ -117,6 +118,8 @@ class ConfluenceEngine:
              If None, uses datetime.now(timezone.utc) — production behavior unchanged.
         norm_scale: override normalization scale for scoring (pass 2.5 in backtest).
                     If None, uses module-level _NORM_SCALE=4.0 — production behavior unchanged.
+        tp2_multiplier: override TP2 ATR multiplier (pass 2.5 in backtest).
+                        If None, uses config.TP2_ATR_MULTIPLIER=3.5 — production behavior unchanged.
         """
         now = now or datetime.now(timezone.utc)
         all_signals = (
@@ -152,6 +155,14 @@ class ConfluenceEngine:
         else:
             return None  # No strong enough signal
 
+        # Trend filter: only trade in direction of EMA200 trend
+        if direction == Direction.LONG and "PRICE_ABOVE_EMA200" not in all_signals:
+            log.debug("Confluence: LONG suppressed — price not above EMA200")
+            return None
+        if direction == Direction.SHORT and "PRICE_BELOW_EMA200" not in all_signals:
+            log.debug("Confluence: SHORT suppressed — price not below EMA200")
+            return None
+
         # Anti-spam check
         if not self._can_send(direction, now):
             log.debug("Confluence: anti-spam suppressed %s signal", direction)
@@ -159,7 +170,8 @@ class ConfluenceEngine:
 
         # Build trade levels
         signal = self._build_signal(
-            direction, strength, factors, pa, tech, liquidity, volume_profile
+            direction, strength, factors, pa, tech, liquidity, volume_profile,
+            tp2_multiplier=tp2_multiplier,
         )
         if signal is None:
             return None
@@ -219,6 +231,7 @@ class ConfluenceEngine:
         tech:           TechnicalResult,
         liquidity:      Optional[LiquidityResult]     = None,
         volume_profile: Optional[VolumeProfileResult] = None,
+        tp2_multiplier: Optional[float]               = None,
     ) -> Optional[TradeSignal]:
         """Construct entry zone, SL, TP using liquidity/VP levels + price action."""
 
@@ -227,6 +240,7 @@ class ConfluenceEngine:
             return None
 
         atr = tech.atr or price * 0.005  # fallback: 0.5% of price
+        _tp2_mult = tp2_multiplier if tp2_multiplier is not None else config.TP2_ATR_MULTIPLIER
 
         # ── Entry mid: priority chain ──────────────────────────────────────────
         # 1. Nearest Order Wall within 1.5% of price (liquidity magnet)
@@ -247,11 +261,11 @@ class ConfluenceEngine:
         if direction == Direction.LONG:
             stop_loss = entry_mid - atr * config.SL_ATR_MULTIPLIER
             tp1       = entry_mid + atr * config.TP1_ATR_MULTIPLIER
-            tp2       = entry_mid + atr * config.TP2_ATR_MULTIPLIER
+            tp2       = entry_mid + atr * _tp2_mult
         else:
             stop_loss = entry_mid + atr * config.SL_ATR_MULTIPLIER
             tp1       = entry_mid - atr * config.TP1_ATR_MULTIPLIER
-            tp2       = entry_mid - atr * config.TP2_ATR_MULTIPLIER
+            tp2       = entry_mid - atr * _tp2_mult
 
         # Guard: entry zone must bracket current price
         if direction == Direction.LONG and entry_high < price:

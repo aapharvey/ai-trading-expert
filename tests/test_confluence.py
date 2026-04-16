@@ -284,6 +284,73 @@ class TestTimeframe:
         assert signal.created_at is not None
 
 
+# ─── Tests: Trend filter ──────────────────────────────────────────────────────
+
+class TestTrendFilter:
+    def test_long_suppressed_when_price_below_ema200(self):
+        """LONG не емітується якщо PRICE_ABOVE_EMA200 відсутній."""
+        engine = ConfluenceEngine()
+        pa, tech, of_ = strong_long_inputs()
+        # Замінюємо PRICE_ABOVE_EMA200 на PRICE_BELOW_EMA200
+        tech.signals = [s for s in tech.signals if s != "PRICE_ABOVE_EMA200"] + ["PRICE_BELOW_EMA200"]
+        assert engine.evaluate(pa, tech, of_) is None
+
+    def test_short_suppressed_when_price_above_ema200(self):
+        """SHORT не емітується якщо PRICE_BELOW_EMA200 відсутній."""
+        engine = ConfluenceEngine()
+        pa, tech, of_ = strong_short_inputs()
+        tech.signals = [s for s in tech.signals if s != "PRICE_BELOW_EMA200"] + ["PRICE_ABOVE_EMA200"]
+        assert engine.evaluate(pa, tech, of_) is None
+
+    def test_long_allowed_when_price_above_ema200(self):
+        """LONG емітується якщо PRICE_ABOVE_EMA200 присутній."""
+        engine = ConfluenceEngine()
+        pa, tech, of_ = strong_long_inputs()
+        assert "PRICE_ABOVE_EMA200" in tech.signals
+        signal = engine.evaluate(pa, tech, of_)
+        assert signal is not None
+        assert signal.direction == Direction.LONG
+
+    def test_short_allowed_when_price_below_ema200(self):
+        """SHORT емітується якщо PRICE_BELOW_EMA200 присутній."""
+        engine = ConfluenceEngine()
+        pa, tech, of_ = strong_short_inputs()
+        assert "PRICE_BELOW_EMA200" in tech.signals
+        signal = engine.evaluate(pa, tech, of_)
+        assert signal is not None
+        assert signal.direction == Direction.SHORT
+
+    def test_trend_filter_does_not_consume_cooldown(self):
+        """Заблокований trend filter не витрачає anti-spam cooldown."""
+        engine = ConfluenceEngine()
+        pa, tech, of_ = strong_long_inputs()
+        t1 = datetime(2024, 5, 1, 10, 0, tzinfo=timezone.utc)
+
+        # Перший виклик — блокуємо через trend filter
+        tech_blocked = make_tech(
+            ["RSI_OVERSOLD", "MACD_DIVERGENCE_BULL", "PRICE_BELOW_EMA200"], pa.current_price
+        )
+        blocked = engine.evaluate(pa, tech_blocked, of_, now=t1, norm_scale=2.5)
+        assert blocked is None
+
+        # Другий виклик одразу — trend filter знятий, cooldown не витрачений
+        signal = engine.evaluate(pa, tech, of_, now=t1, norm_scale=2.5)
+        assert signal is not None
+
+    def test_tp2_multiplier_override_reduces_tp2(self):
+        """tp2_multiplier=2.5 дає TP2 ближче ніж дефолтний 3.5."""
+        engine = ConfluenceEngine()
+        pa, tech, of_ = strong_long_inputs()
+
+        sig_default  = engine.evaluate(pa, tech, of_)
+        engine.reset_cooldown()
+        sig_backtest = engine.evaluate(pa, tech, of_, tp2_multiplier=2.5)
+
+        assert sig_default  is not None
+        assert sig_backtest is not None
+        assert sig_backtest.tp2 < sig_default.tp2
+
+
 # ─── Tests: Backtest mode (now + norm_scale) ─────────────────────────────────
 
 class TestBacktestMode:
