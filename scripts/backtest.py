@@ -375,7 +375,7 @@ def run_backtest() -> list[BacktestSignal]:
         signal = engine.evaluate(
             pa_result, tech_result, of_result,
             now=candle_time, norm_scale=2.5, tp2_multiplier=2.5,
-            min_strength=4, trend_filter_1d=True,
+            min_strength=4, trend_filter_1d=True, long_only=True,
         )
         if signal is None:
             continue

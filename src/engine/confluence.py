@@ -111,6 +111,7 @@ class ConfluenceEngine:
         tp2_multiplier: Optional[float]               = None,
         min_strength:   Optional[int]                 = None,
         trend_filter_1d: bool                         = False,
+        long_only:       bool                         = False,
     ) -> Optional[TradeSignal]:
         """
         Main entry point. Returns a TradeSignal or None.
@@ -161,6 +162,10 @@ class ConfluenceEngine:
             factors   = short_factors
         else:
             return None  # No strong enough signal
+
+        # Long-only mode (backtest only)
+        if long_only and direction == Direction.SHORT:
+            return None
 
         # Trend filter: only trade in direction of EMA200 trend (1H)
         if direction == Direction.LONG and "PRICE_ABOVE_EMA200" not in all_signals:
