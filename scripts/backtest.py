@@ -97,6 +97,22 @@ def to_4h(candles_1h: list[dict]) -> list[dict]:
     return result
 
 
+def to_1d(candles_1h: list[dict]) -> list[dict]:
+    """Aggregate 1h candles into 1D candles (groups of 24)."""
+    result = []
+    for i in range(0, len(candles_1h) - 23, 24):
+        group = candles_1h[i: i + 24]
+        result.append({
+            "timestamp": group[0]["timestamp"],
+            "open":      group[0]["open"],
+            "high":      max(c["high"]   for c in group),
+            "low":       min(c["low"]    for c in group),
+            "close":     group[-1]["close"],
+            "volume":    sum(c["volume"] for c in group),
+        })
+    return result
+
+
 # ─── Helper: fake OI history from price ──────────────────────────────────────
 
 def make_fake_oi(candles: list[dict]) -> list[dict]:
@@ -289,6 +305,7 @@ def run_backtest() -> list[BacktestSignal]:
     print(f"Loaded {len(candles_1h)} candles | F&G entries: {len(fg_data)}")
 
     candles_4h = to_4h(candles_1h)
+    candles_1d = to_1d(candles_1h)
 
     pa_analyzer   = PriceActionAnalyzer()
     tech_analyzer = TechnicalAnalyzer()
@@ -296,20 +313,26 @@ def run_backtest() -> list[BacktestSignal]:
     engine        = ConfluenceEngine()
 
     all_signals: list[BacktestSignal] = []
-    step = len(candles_1h) // 20   # progress every 5%
+    total = len(candles_1h)
+    bar_width = 30
 
     print("Running backtest...")
 
-    for i in range(MIN_TECH_CANDLES, len(candles_1h)):
-        if step and i % step == 0:
-            pct = int(i / len(candles_1h) * 100)
-            ts  = datetime.fromtimestamp(
+    for i in range(MIN_TECH_CANDLES, total):
+        # Progress bar (update every 0.5%)
+        if i % max(1, total // 200) == 0 or i == total - 1:
+            pct  = i / total
+            filled = int(bar_width * pct)
+            bar  = "█" * filled + "░" * (bar_width - filled)
+            ts   = datetime.fromtimestamp(
                 candles_1h[i]["timestamp"] / 1000, tz=timezone.utc
             ).strftime("%Y-%m-%d")
-            print(f"  {pct}% — {ts}")
+            sys.stdout.write(f"\r  [{bar}] {pct*100:5.1f}% — {ts}")
+            sys.stdout.flush()
 
         window_1h = candles_1h[max(0, i - MIN_TECH_CANDLES): i + 1]
         window_4h = candles_4h[max(0, (i // 4) - MIN_PA_CANDLES): (i // 4) + 1]
+        window_1d = candles_1d[max(0, (i // 24) - MIN_PA_CANDLES): (i // 24) + 1]
         current_price = candles_1h[i]["close"]
 
         if len(window_1h) < MIN_TECH_CANDLES or len(window_4h) < 20:
@@ -333,11 +356,27 @@ def run_backtest() -> list[BacktestSignal]:
         if fg_signals:
             of_result.signals = of_result.signals + fg_signals
 
+        # Inject 1D EMA200 trend signal
+        if len(window_1d) >= 200:
+            try:
+                tech_1d = tech_analyzer.analyze(window_1d)
+                if tech_1d.ema_200:
+                    if current_price > tech_1d.ema_200:
+                        of_result.signals = of_result.signals + ["PRICE_ABOVE_EMA200_1D"]
+                    else:
+                        of_result.signals = of_result.signals + ["PRICE_BELOW_EMA200_1D"]
+            except Exception:
+                pass
+
         # Evaluate confluence (pass candle time so anti-spam uses historical time, not now)
         candle_time = datetime.fromtimestamp(
             candles_1h[i]["timestamp"] / 1000, tz=timezone.utc
         )
-        signal = engine.evaluate(pa_result, tech_result, of_result, now=candle_time, norm_scale=2.5, tp2_multiplier=2.5, min_strength=4)
+        signal = engine.evaluate(
+            pa_result, tech_result, of_result,
+            now=candle_time, norm_scale=2.5, tp2_multiplier=2.5,
+            min_strength=4, trend_filter_1d=True,
+        )
         if signal is None:
             continue
 
@@ -358,6 +397,7 @@ def run_backtest() -> list[BacktestSignal]:
         resolve_outcome(bt_signal, future)
         all_signals.append(bt_signal)
 
+    print()  # newline after progress bar
     return all_signals, len(candles_1h)
 
 

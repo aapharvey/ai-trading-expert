@@ -110,6 +110,7 @@ class ConfluenceEngine:
         norm_scale:     Optional[float]               = None,
         tp2_multiplier: Optional[float]               = None,
         min_strength:   Optional[int]                 = None,
+        trend_filter_1d: bool                         = False,
     ) -> Optional[TradeSignal]:
         """
         Main entry point. Returns a TradeSignal or None.
@@ -123,6 +124,8 @@ class ConfluenceEngine:
                         If None, uses config.TP2_ATR_MULTIPLIER=3.5 — production behavior unchanged.
         min_strength: override minimum signal strength threshold (pass 4 in backtest).
                       If None, uses config.MIN_SIGNAL_STRENGTH=3 — production behavior unchanged.
+        trend_filter_1d: when True, also require 1D EMA200 alignment (backtest only).
+                         Expects PRICE_ABOVE_EMA200_1D / PRICE_BELOW_EMA200_1D in signals.
         """
         now = now or datetime.now(timezone.utc)
         all_signals = (
@@ -159,13 +162,22 @@ class ConfluenceEngine:
         else:
             return None  # No strong enough signal
 
-        # Trend filter: only trade in direction of EMA200 trend
+        # Trend filter: only trade in direction of EMA200 trend (1H)
         if direction == Direction.LONG and "PRICE_ABOVE_EMA200" not in all_signals:
-            log.debug("Confluence: LONG suppressed — price not above EMA200")
+            log.debug("Confluence: LONG suppressed — price not above EMA200 (1H)")
             return None
         if direction == Direction.SHORT and "PRICE_BELOW_EMA200" not in all_signals:
-            log.debug("Confluence: SHORT suppressed — price not below EMA200")
+            log.debug("Confluence: SHORT suppressed — price not below EMA200 (1H)")
             return None
+
+        # Trend filter: 1D EMA200 alignment (backtest only, opt-in)
+        if trend_filter_1d:
+            if direction == Direction.LONG and "PRICE_ABOVE_EMA200_1D" not in all_signals:
+                log.debug("Confluence: LONG suppressed — price not above EMA200 (1D)")
+                return None
+            if direction == Direction.SHORT and "PRICE_BELOW_EMA200_1D" not in all_signals:
+                log.debug("Confluence: SHORT suppressed — price not below EMA200 (1D)")
+                return None
 
         # Anti-spam check
         if not self._can_send(direction, now):
