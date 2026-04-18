@@ -109,6 +109,7 @@ class ConfluenceEngine:
         now:            Optional[datetime]            = None,
         norm_scale:     Optional[float]               = None,
         tp2_multiplier: Optional[float]               = None,
+        min_strength:   Optional[int]                 = None,
     ) -> Optional[TradeSignal]:
         """
         Main entry point. Returns a TradeSignal or None.
@@ -120,6 +121,8 @@ class ConfluenceEngine:
                     If None, uses module-level _NORM_SCALE=4.0 — production behavior unchanged.
         tp2_multiplier: override TP2 ATR multiplier (pass 2.5 in backtest).
                         If None, uses config.TP2_ATR_MULTIPLIER=3.5 — production behavior unchanged.
+        min_strength: override minimum signal strength threshold (pass 4 in backtest).
+                      If None, uses config.MIN_SIGNAL_STRENGTH=3 — production behavior unchanged.
         """
         now = now or datetime.now(timezone.utc)
         all_signals = (
@@ -144,11 +147,12 @@ class ConfluenceEngine:
         )
 
         # Determine winning direction
-        if long_strength >= short_strength and long_strength >= config.MIN_SIGNAL_STRENGTH:
+        _min_strength = min_strength if min_strength is not None else config.MIN_SIGNAL_STRENGTH
+        if long_strength >= short_strength and long_strength >= _min_strength:
             direction = Direction.LONG
             strength  = long_strength
             factors   = long_factors
-        elif short_strength > long_strength and short_strength >= config.MIN_SIGNAL_STRENGTH:
+        elif short_strength > long_strength and short_strength >= _min_strength:
             direction = Direction.SHORT
             strength  = short_strength
             factors   = short_factors

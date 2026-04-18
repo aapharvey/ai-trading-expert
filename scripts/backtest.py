@@ -337,7 +337,7 @@ def run_backtest() -> list[BacktestSignal]:
         candle_time = datetime.fromtimestamp(
             candles_1h[i]["timestamp"] / 1000, tz=timezone.utc
         )
-        signal = engine.evaluate(pa_result, tech_result, of_result, now=candle_time, norm_scale=2.5, tp2_multiplier=2.5)
+        signal = engine.evaluate(pa_result, tech_result, of_result, now=candle_time, norm_scale=2.5, tp2_multiplier=2.5, min_strength=4)
         if signal is None:
             continue
 
