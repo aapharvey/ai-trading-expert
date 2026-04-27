@@ -345,25 +345,13 @@ def print_report(stats: BacktestStats, metrics: Optional[dict] = None) -> None:
 
 # ─── Main backtest loop ───────────────────────────────────────────────────────
 
-def run_backtest() -> list[BacktestSignal]:
-    # Load data
-    if not os.path.exists(OHLCV_PATH):
-        print(f"ERROR: {OHLCV_PATH} not found.")
-        print("Run: python scripts/backtest_data.py")
-        sys.exit(1)
-
-    with open(OHLCV_PATH) as f:
-        candles_1h: list[dict] = json.load(f)
-
-    fg_data: dict[str, int] = {}
-    if os.path.exists(FG_PATH):
-        with open(FG_PATH) as f:
-            fg_data = json.load(f)
-    else:
-        print("Fear & Greed data not found — sentiment signals disabled.")
-
-    print(f"Loaded {len(candles_1h)} candles | F&G entries: {len(fg_data)}")
-
+def run_backtest_window(
+    candles_1h: list[dict],
+    fg_data: dict[str, int],
+    params: dict,
+    show_progress: bool = False,
+) -> list[BacktestSignal]:
+    """Run the backtest loop on a candle slice with given confluence params."""
     candles_4h = to_4h(candles_1h)
     candles_1d = to_1d(candles_1h)
 
@@ -372,33 +360,33 @@ def run_backtest() -> list[BacktestSignal]:
     of_analyzer   = OrderFlowAnalyzer()
     engine        = ConfluenceEngine()
 
+    norm_scale     = params.get("norm_scale", 2.5)
+    min_strength   = params.get("min_strength", 4)
+    tp2_multiplier = params.get("tp2_multiplier", 2.5)
+
     all_signals: list[BacktestSignal] = []
-    total = len(candles_1h)
+    total     = len(candles_1h)
     bar_width = 30
 
-    print("Running backtest...")
-
     for i in range(MIN_TECH_CANDLES, total):
-        # Progress bar (update every 0.5%)
-        if i % max(1, total // 200) == 0 or i == total - 1:
-            pct  = i / total
+        if show_progress and (i % max(1, total // 200) == 0 or i == total - 1):
+            pct    = i / total
             filled = int(bar_width * pct)
-            bar  = "█" * filled + "░" * (bar_width - filled)
-            ts   = datetime.fromtimestamp(
+            bar    = "█" * filled + "░" * (bar_width - filled)
+            ts     = datetime.fromtimestamp(
                 candles_1h[i]["timestamp"] / 1000, tz=timezone.utc
             ).strftime("%Y-%m-%d")
             sys.stdout.write(f"\r  [{bar}] {pct*100:5.1f}% — {ts}")
             sys.stdout.flush()
 
-        window_1h = candles_1h[max(0, i - MIN_TECH_CANDLES): i + 1]
-        window_4h = candles_4h[max(0, (i // 4) - MIN_PA_CANDLES): (i // 4) + 1]
-        window_1d = candles_1d[max(0, (i // 24) - MIN_PA_CANDLES): (i // 24) + 1]
+        window_1h     = candles_1h[max(0, i - MIN_TECH_CANDLES): i + 1]
+        window_4h     = candles_4h[max(0, (i // 4) - MIN_PA_CANDLES): (i // 4) + 1]
+        window_1d     = candles_1d[max(0, (i // 24) - MIN_PA_CANDLES): (i // 24) + 1]
         current_price = candles_1h[i]["close"]
 
         if len(window_1h) < MIN_TECH_CANDLES or len(window_4h) < 20:
             continue
 
-        # Run analyzers
         try:
             pa_result   = pa_analyzer.analyze(window_4h)
             tech_result = tech_analyzer.analyze(window_1h)
@@ -411,12 +399,10 @@ def run_backtest() -> list[BacktestSignal]:
         except Exception:
             continue
 
-        # Inject Fear & Greed signals
         fg_signals = get_fg_signals(candles_1h[i]["timestamp"], fg_data)
         if fg_signals:
             of_result.signals = of_result.signals + fg_signals
 
-        # Inject 1D EMA200 trend signal
         if len(window_1d) >= 200:
             try:
                 tech_1d = tech_analyzer.analyze(window_1d)
@@ -428,14 +414,17 @@ def run_backtest() -> list[BacktestSignal]:
             except Exception:
                 pass
 
-        # Evaluate confluence (pass candle time so anti-spam uses historical time, not now)
         candle_time = datetime.fromtimestamp(
             candles_1h[i]["timestamp"] / 1000, tz=timezone.utc
         )
         signal = engine.evaluate(
             pa_result, tech_result, of_result,
-            now=candle_time, norm_scale=2.5, tp2_multiplier=2.5,
-            min_strength=4, trend_filter_1d=True, long_only=True,
+            now=candle_time,
+            norm_scale=norm_scale,
+            tp2_multiplier=tp2_multiplier,
+            min_strength=min_strength,
+            trend_filter_1d=True,
+            long_only=True,
         )
         if signal is None:
             continue
@@ -452,13 +441,36 @@ def run_backtest() -> list[BacktestSignal]:
             factors    = signal.factors,
         )
 
-        # Resolve outcome from future candles
         future = candles_1h[i + 1:]
         resolve_outcome(bt_signal, future)
         all_signals.append(bt_signal)
 
+    return all_signals
+
+
+def run_backtest() -> tuple[list[BacktestSignal], int]:
+    if not os.path.exists(OHLCV_PATH):
+        print(f"ERROR: {OHLCV_PATH} not found.")
+        print("Run: python scripts/backtest_data.py")
+        sys.exit(1)
+
+    with open(OHLCV_PATH) as f:
+        candles_1h: list[dict] = json.load(f)
+
+    fg_data: dict[str, int] = {}
+    if os.path.exists(FG_PATH):
+        with open(FG_PATH) as f:
+            fg_data = json.load(f)
+    else:
+        print("Fear & Greed data not found — sentiment signals disabled.")
+
+    print(f"Loaded {len(candles_1h)} candles | F&G entries: {len(fg_data)}")
+    print("Running backtest...")
+
+    default_params = {"norm_scale": 2.5, "min_strength": 4, "tp2_multiplier": 2.5}
+    signals = run_backtest_window(candles_1h, fg_data, default_params, show_progress=True)
     print()  # newline after progress bar
-    return all_signals, len(candles_1h)
+    return signals, len(candles_1h)
 
 
 # ─── Entry point ──────────────────────────────────────────────────────────────
