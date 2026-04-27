@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "backtesting-frameworks": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "d6a1704ca435018bd441ef4472e843bf6a2e9dbf3e8b75a0aae9c95e66efe7bd"
+    }
+  }
+}
