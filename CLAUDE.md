@@ -80,11 +80,11 @@ Conclusion: [what to fix before approve / or ready to merge]
 ## Skills
 
 ### backtesting-frameworks
-Встановлено. Застосовувати ТІЛЬКИ для:
-1. `scripts/backtest.py` — додавання метрик (Sharpe, Sortino, Calmar, equity curve)
-2. `scripts/walk_forward.py` — новий файл, Walk-Forward оптимізація параметрів confluence
-3. `scripts/monte_carlo.py` — новий файл, Monte Carlo на backtest_results.json
+Installed. Use ONLY for:
+1. `scripts/backtest.py` — add metrics (Sharpe, Sortino, Calmar, equity curve)
+2. `scripts/walk_forward.py` — new file, Walk-Forward optimization of confluence params
+3. `scripts/monte_carlo.py` — new file, Monte Carlo analysis on backtest_results.json
 
-НЕ застосовувати Event-driven backtester зі скілу — власний backtest loop вже є.
-НЕ замінювати існуючий BacktestSignal / BacktestStats — тільки розширювати.
-Параметри для WFO: norm_scale [1.5–4.0], min_strength [3–5], tp2_multiplier [2.0–4.0].
+DO NOT use Event-driven backtester from skill — existing backtest loop is sufficient.
+DO NOT replace existing BacktestSignal / BacktestStats — extend only.
+WFO parameter ranges: norm_scale [1.5–4.0], min_strength [3–5], tp2_multiplier [2.0–4.0].
