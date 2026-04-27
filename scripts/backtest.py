@@ -23,6 +23,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
+import numpy as np
+import pandas as pd
+
 # Allow imports from project root
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -251,9 +254,58 @@ def compute_stats(signals: list[BacktestSignal], total_candles: int) -> Backtest
     return stats
 
 
+# ─── Financial metrics ────────────────────────────────────────────────────────
+
+def calculate_metrics(
+    returns: "pd.Series",
+    rf_rate: float = 0.0,
+    ann_factor: float = 252,
+) -> dict:
+    """Sharpe / Sortino / Calmar / max drawdown from a per-trade returns series."""
+    total_return  = (1 + returns).prod() - 1
+    annual_return = (1 + total_return) ** (ann_factor / len(returns)) - 1
+    annual_vol    = returns.std() * np.sqrt(ann_factor)
+
+    sharpe = (annual_return - rf_rate) / annual_vol if annual_vol > 0 else 0.0
+
+    downside     = returns[returns < 0]
+    down_vol     = downside.std() * np.sqrt(ann_factor) if len(downside) > 1 else 0.0
+    sortino      = (annual_return - rf_rate) / down_vol if down_vol > 0 else 0.0
+
+    equity       = (1 + returns).cumprod()
+    drawdowns    = (equity - equity.cummax()) / equity.cummax()
+    max_drawdown = drawdowns.min()
+    calmar       = annual_return / abs(max_drawdown) if max_drawdown != 0 else 0.0
+
+    return {
+        "sharpe_ratio":     round(sharpe, 3),
+        "sortino_ratio":    round(sortino, 3),
+        "calmar_ratio":     round(calmar, 3),
+        "max_drawdown_pct": round(max_drawdown * 100, 2),
+    }
+
+
+def compute_financial_metrics(signals: list) -> dict:
+    """Convert achieved_rr to 1%-risk returns, then compute financial metrics."""
+    resolved = [s for s in signals if s.outcome != "OPEN"]
+    if len(resolved) < 2:
+        return {"sharpe_ratio": 0.0, "sortino_ratio": 0.0, "calmar_ratio": 0.0, "max_drawdown_pct": 0.0}
+
+    # Fixed-fractional: risk 1% of capital per trade.
+    # achieved_rr=-1.0 for LOSS → -1%; achieved_rr=2.5 for WIN_TP2 → +2.5%
+    risk_pct = 0.01
+    returns  = pd.Series([s.achieved_rr * risk_pct for s in resolved])
+
+    # Annualisation from actual signal time span (trades per year)
+    span_days  = (resolved[-1].timestamp - resolved[0].timestamp) / (1000 * 86_400)
+    ann_factor = (len(resolved) / span_days * 365) if span_days > 0 else 52.0
+
+    return calculate_metrics(returns, rf_rate=0.0, ann_factor=ann_factor)
+
+
 # ─── Print report ─────────────────────────────────────────────────────────────
 
-def print_report(stats: BacktestStats) -> None:
+def print_report(stats: BacktestStats, metrics: Optional[dict] = None) -> None:
     resolved = stats.win_tp1 + stats.win_tp2 + stats.loss
     win_rate_tp1 = round(stats.win_tp1 / resolved * 100, 1) if resolved else 0
     win_rate_tp2 = round((stats.win_tp1 + stats.win_tp2) / resolved * 100, 1) if resolved else 0
@@ -270,6 +322,14 @@ def print_report(stats: BacktestStats) -> None:
     print(f" Max consec. losses: {stats.max_drawdown}")
     print(f" Signals / week    : {stats.signals_per_week}")
     print(line)
+
+    if metrics:
+        print(f" {'─'*48}")
+        print(f" Sharpe ratio      : {metrics['sharpe_ratio']}")
+        print(f" Sortino ratio     : {metrics['sortino_ratio']}")
+        print(f" Calmar ratio      : {metrics['calmar_ratio']}")
+        print(f" Max drawdown      : {metrics['max_drawdown_pct']}%")
+        print(line)
 
     if stats.signals_per_week < 1.0:
         print(" WARNING: < 1 signal/week — strategy too conservative.")
@@ -406,7 +466,8 @@ def run_backtest() -> list[BacktestSignal]:
 if __name__ == "__main__":
     signals, total_candles = run_backtest()
     stats   = compute_stats(signals, total_candles)
-    print_report(stats)
+    metrics = compute_financial_metrics(signals)
+    print_report(stats, metrics)
 
     # Save results
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -421,6 +482,7 @@ if __name__ == "__main__":
             "max_drawdown":     stats.max_drawdown,
             "signals_per_week": stats.signals_per_week,
         },
+        "financial_metrics": metrics,
         "signals": [
             {
                 "timestamp":   s.timestamp,
