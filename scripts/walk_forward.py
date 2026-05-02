@@ -21,6 +21,8 @@ import sys
 from collections import Counter
 from itertools import product
 
+from tqdm import tqdm
+
 # Add scripts dir so `backtest` is importable directly
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -44,8 +46,8 @@ WFO_RESULTS_PATH = os.path.join(DATA_DIR, "walk_forward_results.json")
 
 PARAM_GRID = {
     "norm_scale":     [1.5, 2.0, 2.5, 3.0],
-    "min_strength":   [3, 4, 5],
-    "tp2_multiplier": [2.0, 2.5, 3.0, 3.5],
+    "min_strength":   [4, 5],
+    "tp2_multiplier": [2.5, 3.0, 3.5, 4.0],
 }
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -81,63 +83,75 @@ def run_walk_forward(candles_1h: list[dict], fg_data: dict) -> list[dict]:
     results      = []
     split_num    = 0
     cursor       = TRAIN_CANDLES
+    n_splits     = max(0, (n - TRAIN_CANDLES) // TEST_CANDLES)
 
-    while cursor + TEST_CANDLES <= n:
-        split_num  += 1
-        train_slice = candles_1h[cursor - TRAIN_CANDLES : cursor]
-        test_slice  = candles_1h[cursor : cursor + TEST_CANDLES]
+    with tqdm(total=n_splits, desc="WFO splits", unit="split", position=0) as split_bar:
+        while cursor + TEST_CANDLES <= n:
+            split_num  += 1
+            train_slice = candles_1h[cursor - TRAIN_CANDLES : cursor]
+            test_slice  = candles_1h[cursor : cursor + TEST_CANDLES]
 
-        print(
-            f"\n── Split {split_num}"
-            f"  ({len(train_slice)}h train / {len(test_slice)}h test,"
-            f"  {len(param_combos)} combos) ──"
-        )
+            split_bar.set_description(f"Split {split_num}/{n_splits}")
 
-        # Grid search on train window
-        best_params = None
-        best_sharpe = float("-inf")
+            # Grid search on train window
+            best_params = None
+            best_sharpe = float("-inf")
 
-        for idx, values in enumerate(param_combos):
-            params     = dict(zip(param_names, values))
-            train_sigs = run_backtest_window(train_slice, fg_data, params)
-            sharpe     = _sharpe_for_signals(train_sigs, len(train_slice))
+            with tqdm(
+                total=len(param_combos),
+                desc="  grid search",
+                unit="combo",
+                position=1,
+                leave=False,
+            ) as combo_bar:
+                for values in param_combos:
+                    params     = dict(zip(param_names, values))
+                    train_sigs = run_backtest_window(train_slice, fg_data, params)
+                    sharpe     = _sharpe_for_signals(train_sigs, len(train_slice))
 
-            if sharpe > best_sharpe:
-                best_sharpe = sharpe
-                best_params = params
+                    if sharpe > best_sharpe:
+                        best_sharpe = sharpe
+                        best_params = params
 
-            sys.stdout.write(
-                f"\r  [{idx+1:>2}/{len(param_combos)}]"
-                f"  best Sharpe={best_sharpe:>7.3f}"
-                f"  @ ns={best_params['norm_scale'] if best_params else '?'}"
-                f"  ms={best_params['min_strength'] if best_params else '?'}"
-                f"  tp={best_params['tp2_multiplier'] if best_params else '?'}"
+                    combo_bar.set_postfix(
+                        best_sharpe=f"{best_sharpe:.3f}",
+                        ns=best_params["norm_scale"] if best_params else "?",
+                        ms=best_params["min_strength"] if best_params else "?",
+                        tp=best_params["tp2_multiplier"] if best_params else "?",
+                    )
+                    combo_bar.update(1)
+
+            if best_params is None:
+                tqdm.write(f"  Split {split_num}: no viable params — skipping.")
+                cursor += TEST_CANDLES
+                split_bar.update(1)
+                continue
+
+            # Evaluate best params on test window
+            test_sigs   = run_backtest_window(test_slice, fg_data, best_params)
+            test_sharpe = _sharpe_for_signals(test_sigs, len(test_slice))
+            test_spw    = _signals_per_week(test_sigs, len(test_slice))
+            viable      = test_sharpe != float("-inf")
+
+            results.append({
+                "split":                 split_num,
+                "best_params":           best_params,
+                "train_sharpe":          round(best_sharpe, 3),
+                "test_sharpe":           round(test_sharpe, 3) if viable else None,
+                "test_signals_per_week": test_spw,
+                "viable":                viable,
+            })
+
+            test_sh_str = f"{test_sharpe:.3f}" if viable else "N/A"
+            tqdm.write(
+                f"  Split {split_num}: train Sharpe={best_sharpe:.3f}"
+                f"  test Sharpe={test_sh_str}"
+                f"  sig/wk={test_spw}"
+                f"  params={best_params}"
             )
-            sys.stdout.flush()
 
-        print()  # newline after grid search line
-
-        if best_params is None:
-            print("  No viable params found — skipping split.")
             cursor += TEST_CANDLES
-            continue
-
-        # Evaluate best params on test window
-        test_sigs   = run_backtest_window(test_slice, fg_data, best_params)
-        test_sharpe = _sharpe_for_signals(test_sigs, len(test_slice))
-        test_spw    = _signals_per_week(test_sigs, len(test_slice))
-        viable      = test_sharpe != float("-inf")
-
-        results.append({
-            "split":                 split_num,
-            "best_params":           best_params,
-            "train_sharpe":          round(best_sharpe, 3),
-            "test_sharpe":           round(test_sharpe, 3) if viable else None,
-            "test_signals_per_week": test_spw,
-            "viable":                viable,
-        })
-
-        cursor += TEST_CANDLES
+            split_bar.update(1)
 
     return results
 

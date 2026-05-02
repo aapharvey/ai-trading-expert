@@ -18,6 +18,7 @@ python-dotenv==1.0.0
 
 # Utils
 colorama==0.4.6
+tqdm==4.67.1
 
 # Testing
 pytest==7.4.4
